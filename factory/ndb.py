@@ -1,8 +1,11 @@
 from __future__ import unicode_literals
+import logging
+logger = logging.getLogger('factory.generate')
+
 
 from google.appengine.ext import ndb
 
-from . import base
+from . import base, declarations, utils
 
 class NDBModelFactory(base.Factory):
     """Factory for Google AppEngine NDB models. """
@@ -20,3 +23,38 @@ class NDBModelFactory(base.Factory):
         obj = model_class(*args, **kwargs)
         obj.put()
         return obj
+        
+        
+class KeyPropertyFactory(declarations.ParameteredAttribute):
+    """A factory that is somehwat similar to SubFactory only it returns the key for the created model instance.
+    Due to the nature of ndb.KeyProperty, we also always have to use create strategy
+    """
+    
+    EXTEND_CONTAINERS = True
+    
+    def __init__(self, factory, **kwargs):
+        super(KeyPropertyFactory, self).__init__(**kwargs)
+        self.factory_wrapper = declarations._FactoryWrapper(factory)
+
+    def get_factory(self):
+        """Retrieve the wrapped factory.Factory subclass."""
+        return self.factory_wrapper.get()
+
+    def generate(self, sequence, obj, create, params):
+        """Evaluate the current definition and fill its attributes.
+
+        Args:
+            create (bool): whether the subfactory should call 'build' or
+                'create'
+            params (containers.DeclarationDict): extra values that should
+                override the wrapped factory's defaults
+        """
+        subfactory = self.get_factory()
+        create = True
+        logger.debug("SubFactory: Instantiating %s.%s(%s), create=%r",
+            subfactory.__module__, subfactory.__name__,
+            utils.log_pprint(kwargs=params),
+            create,
+        )
+        return subfactory.simple_generate(create, **params).key
+    

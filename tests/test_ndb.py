@@ -1,9 +1,10 @@
 import sys
+sys.path.append('/usr/local/google_appengine/')
 
 import factory
+from factory import ndb as factory_ndb
 from .compat import unittest
 
-sys.path.append('/usr/local/google_appengine/')
 
 try:
     from google.appengine.ext import ndb
@@ -15,6 +16,9 @@ except ImportError:
 if ndb:
     from factory.ndb import NDBModelFactory
 
+    class Color(ndb.Model):
+        name = ndb.StringProperty()
+        
     class Address(ndb.Model):
         name    = ndb.StringProperty() # E.g., 'home', 'work'
         street  = ndb.StringProperty()
@@ -23,6 +27,13 @@ if ndb:
     class Person(ndb.Model):
         name = ndb.StringProperty()
         address = ndb.StructuredProperty(Address)
+        color   = ndb.KeyProperty(Color)
+        
+    class ColorFactory(NDBModelFactory):
+        class Meta:
+            model = Color
+
+        name = factory.Sequence(lambda n: 'color%d' % n)
         
     class AddressFactory(NDBModelFactory):
         class Meta:
@@ -37,6 +48,7 @@ if ndb:
 
         name = factory.Sequence(lambda n: 'name%d' % n)
         address = factory.SubFactory(AddressFactory)
+        color = factory_ndb.KeyPropertyFactory(ColorFactory)
     
     
 @unittest.skipIf(ndb is None, "Google AppEngine is not installed.")
