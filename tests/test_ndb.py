@@ -67,12 +67,12 @@ class NDBTestCase(unittest.TestCase):
         self.testbed.activate()
         self.testbed.init_datastore_v3_stub()
         self.testbed.init_memcache_stub()
-        
 
     def test_build(self):
         p = PersonFactory.build()
         self.assertEqual('name0', p.name)
         self.assertEqual('street0', p.address.street)
+        self.assertEqual('color0', p.color.get().name)
 
     def test_creation(self):
         person = PersonFactory.create()
