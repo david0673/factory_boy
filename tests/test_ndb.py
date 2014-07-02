@@ -47,7 +47,8 @@ if ndb:
             model = Person
 
         name = factory.Sequence(lambda n: 'name%d' % n)
-        address = factory.SubFactory(AddressFactory)
+        # address = factory.SubFactory(AddressFactory)
+        address = factory_ndb.StructuredPropertyFactory(AddressFactory)
         color = factory_ndb.KeyPropertyFactory(ColorFactory)
     
     

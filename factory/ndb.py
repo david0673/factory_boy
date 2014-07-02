@@ -57,4 +57,37 @@ class KeyPropertyFactory(declarations.ParameteredAttribute):
             create,
         )
         return subfactory.simple_generate(create, **params).key
+        
+class StructuredPropertyFactory(declarations.ParameteredAttribute):
+    """A factory that is somehwat similar to SubFactory only it returns the key for the created model instance.
+    Due to the nature of ndb.KeyProperty, we also always have to use create strategy
+    """
+    
+    EXTEND_CONTAINERS = True
+    
+    def __init__(self, factory, **kwargs):
+        super(StructuredPropertyFactory, self).__init__(**kwargs)
+        self.factory_wrapper = declarations._FactoryWrapper(factory)
+
+    def get_factory(self):
+        """Retrieve the wrapped factory.Factory subclass."""
+        return self.factory_wrapper.get()
+
+    def generate(self, sequence, obj, create, params):
+        """Evaluate the current definition and fill its attributes.
+
+        Args:
+            create (bool): whether the subfactory should call 'build' or
+                'create'
+            params (containers.DeclarationDict): extra values that should
+                override the wrapped factory's defaults
+        """
+        subfactory = self.get_factory()
+        create = True
+        logger.debug("SubFactory: Instantiating %s.%s(%s), create=%r",
+            subfactory.__module__, subfactory.__name__,
+            utils.log_pprint(kwargs=params),
+            create,
+        )
+        return subfactory.simple_generate(False, **params)
     
