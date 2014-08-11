@@ -20,7 +20,7 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 # THE SOFTWARE.
 
-__version__ = '2.3.1'
+__version__ = '2.4.1'
 __author__ = 'Raphaël Barrois <raphael.barrois+fboy@polytechnique.org>'
 
 
@@ -31,6 +31,8 @@ from .base import (
     BaseListFactory,
     ListFactory,
     StubFactory,
+
+    FactoryError,
 
     BUILD_STRATEGY,
     CREATE_STRATEGY,
