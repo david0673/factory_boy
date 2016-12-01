@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # Copyright (c) 2010 Mark Sandstrom
-# Copyright (c) 2011-2013 Raphaël Barrois
+# Copyright (c) 2011-2015 Raphaël Barrois
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to deal
@@ -24,6 +24,7 @@ import warnings
 
 from factory import base
 from factory import declarations
+from factory import errors
 
 from .compat import unittest
 
@@ -63,7 +64,7 @@ class TestModel(FakeDjangoModel):
 
 class SafetyTestCase(unittest.TestCase):
     def test_base_factory(self):
-        self.assertRaises(base.FactoryError, base.BaseFactory)
+        self.assertRaises(errors.FactoryError, base.BaseFactory)
 
 
 class AbstractFactoryTestCase(unittest.TestCase):
@@ -88,8 +89,8 @@ class AbstractFactoryTestCase(unittest.TestCase):
         class TestObjectFactory(base.Factory):
             pass
 
-        self.assertRaises(base.FactoryError, TestObjectFactory.build)
-        self.assertRaises(base.FactoryError, TestObjectFactory.create)
+        self.assertRaises(errors.FactoryError, TestObjectFactory.build)
+        self.assertRaises(errors.FactoryError, TestObjectFactory.create)
 
     def test_abstract_factory_not_inherited(self):
         """abstract=True isn't propagated to child classes."""
@@ -110,8 +111,8 @@ class AbstractFactoryTestCase(unittest.TestCase):
                 abstract = False
                 model = None
 
-        self.assertRaises(base.FactoryError, TestObjectFactory.build)
-        self.assertRaises(base.FactoryError, TestObjectFactory.create)
+        self.assertRaises(errors.FactoryError, TestObjectFactory.build)
+        self.assertRaises(errors.FactoryError, TestObjectFactory.create)
 
 
 class OptionsTests(unittest.TestCase):
@@ -134,25 +135,28 @@ class OptionsTests(unittest.TestCase):
         self.assertEqual(AbstractFactory, AbstractFactory._meta.counter_reference)
 
     def test_declaration_collecting(self):
-        lazy = declarations.LazyAttribute(lambda _o: 1)
+        lazy = declarations.LazyFunction(int)
+        lazy2 = declarations.LazyAttribute(lambda _o: 1)
         postgen = declarations.PostGenerationDeclaration()
 
         class AbstractFactory(base.Factory):
             x = 1
             y = lazy
+            y2 = lazy2
             z = postgen
 
         # Declarations aren't removed
         self.assertEqual(1, AbstractFactory.x)
         self.assertEqual(lazy, AbstractFactory.y)
+        self.assertEqual(lazy2, AbstractFactory.y2)
         self.assertEqual(postgen, AbstractFactory.z)
 
         # And are available in class Meta
-        self.assertEqual({'x': 1, 'y': lazy}, AbstractFactory._meta.declarations)
+        self.assertEqual({'x': 1, 'y': lazy, 'y2': lazy2}, AbstractFactory._meta.declarations)
         self.assertEqual({'z': postgen}, AbstractFactory._meta.postgen_declarations)
 
     def test_inherited_declaration_collecting(self):
-        lazy = declarations.LazyAttribute(lambda _o: 1)
+        lazy = declarations.LazyFunction(int)
         lazy2 = declarations.LazyAttribute(lambda _o: 2)
         postgen = declarations.PostGenerationDeclaration()
         postgen2 = declarations.PostGenerationDeclaration()
@@ -178,7 +182,7 @@ class OptionsTests(unittest.TestCase):
         self.assertEqual({'z': postgen, 'b': postgen2}, OtherFactory._meta.postgen_declarations)
 
     def test_inherited_declaration_shadowing(self):
-        lazy = declarations.LazyAttribute(lambda _o: 1)
+        lazy = declarations.LazyFunction(int)
         lazy2 = declarations.LazyAttribute(lambda _o: 2)
         postgen = declarations.PostGenerationDeclaration()
         postgen2 = declarations.PostGenerationDeclaration()
@@ -403,7 +407,7 @@ class FactoryDefaultStrategyTestCase(unittest.TestCase):
 
         self.assertRaises(base.Factory.UnknownStrategy, TestModelFactory)
 
-    def test_stub_with_non_stub_strategy(self):
+    def test_stub_with_create_strategy(self):
         class TestModelFactory(base.StubFactory):
             class Meta:
                 model = TestModel
@@ -414,8 +418,18 @@ class FactoryDefaultStrategyTestCase(unittest.TestCase):
 
         self.assertRaises(base.StubFactory.UnsupportedStrategy, TestModelFactory)
 
+    def test_stub_with_build_strategy(self):
+        class TestModelFactory(base.StubFactory):
+            class Meta:
+                model = TestModel
+
+            one = 'one'
+
         TestModelFactory._meta.strategy = base.BUILD_STRATEGY
-        self.assertRaises(base.StubFactory.UnsupportedStrategy, TestModelFactory)
+        obj = TestModelFactory()
+
+        # For stubs, build() is an alias of stub().
+        self.assertFalse(isinstance(obj, TestModel))
 
     def test_change_strategy(self):
         @base.use_strategy(base.CREATE_STRATEGY)
@@ -453,6 +467,23 @@ class FactoryCreationTestCase(unittest.TestCase):
             pass
 
         self.assertEqual(TestFactory._meta.strategy, base.STUB_STRATEGY)
+
+    def test_stub_and_subfactory(self):
+        class StubA(base.StubFactory):
+            class Meta:
+                model = TestObject
+
+            one = 'blah'
+
+        class StubB(base.StubFactory):
+            class Meta:
+                model = TestObject
+
+            stubbed = declarations.SubFactory(StubA, two='two')
+
+        b = StubB()
+        self.assertEqual('blah', b.stubbed.one)
+        self.assertEqual('two', b.stubbed.two)
 
     def test_custom_creation(self):
         class TestModelFactory(FakeModelFactory):

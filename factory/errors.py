@@ -19,24 +19,22 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 # THE SOFTWARE.
 
-"""Compatibility tools for tests"""
 
-import sys
+class FactoryError(Exception):
+    """Any exception raised by factory_boy."""
 
-is_python2 = (sys.version_info[0] == 2)
 
-if sys.version_info[0:2] < (2, 7):  # pragma: no cover
-    import unittest2 as unittest
-else:  # pragma: no cover
-    import unittest
+class AssociatedClassError(FactoryError):
+    """Exception for Factory subclasses lacking Meta.model."""
 
-if sys.version_info[0] == 2:  # pragma: no cover
-    import StringIO as io
-else:  # pragma: no cover
-    import io
 
-if sys.version_info[0:2] < (3, 3):  # pragma: no cover
-    import mock
-else:  # pragma: no cover
-    from unittest import mock
+class UnknownStrategy(FactoryError):
+    """Raised when a factory uses an unknown strategy."""
 
+
+class UnsupportedStrategy(FactoryError):
+    """Raised when trying to use a strategy on an incompatible Factory."""
+
+
+class CyclicDefinitionError(FactoryError):
+    """Raised when a cyclical declaration occurs."""

@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# Copyright (c) 2011-2013 Raphaël Barrois
+# Copyright (c) 2011-2015 Raphaël Barrois
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to deal
@@ -21,15 +21,35 @@
 """Tests for factory_boy/Django interactions."""
 
 import os
-
-import factory
-import factory.django
+from .compat import is_python2, unittest, mock
 
 
 try:
     import django
 except ImportError:  # pragma: no cover
     django = None
+
+# Setup Django as soon as possible
+if django is not None:
+    os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'tests.djapp.settings')
+
+    if django.VERSION >= (1, 7, 0):
+        django.setup()
+    from django import test as django_test
+    from django.conf import settings
+    from django.db import models as django_models
+    if django.VERSION <= (1, 8, 0):
+        from django.test.simple import DjangoTestSuiteRunner
+    else:
+        from django.test.runner import DiscoverRunner as DjangoTestSuiteRunner
+    from django.test import utils as django_test_utils
+    from django.db.models import signals
+    from .djapp import models
+
+else:
+    django_test = unittest
+
+
 
 try:
     from PIL import Image
@@ -42,36 +62,12 @@ except ImportError:  # pragma: no cover
         Image = None
 
 
-from .compat import is_python2, unittest, mock
+import factory
+import factory.django
+from factory.compat import BytesIO
+
 from . import testdata
 from . import tools
-
-
-if django is not None:
-    os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'tests.djapp.settings')
-
-    from django import test as django_test
-    from django.conf import settings
-    from django.db import models as django_models
-    from django.test import simple as django_test_simple
-    from django.test import utils as django_test_utils
-    from django.db.models import signals
-    from .djapp import models
-else:  # pragma: no cover
-    django_test = unittest
-
-    class Fake(object):
-        pass
-
-    models = Fake()
-    models.StandardModel = Fake
-    models.StandardSon = None
-    models.AbstractBase = Fake
-    models.ConcreteSon = Fake
-    models.NonIntegerPk = Fake
-    models.WithFile = Fake
-    models.WithImage = Fake
-    models.WithSignals = Fake
 
 
 test_state = {}
@@ -81,7 +77,7 @@ def setUpModule():
     if django is None:  # pragma: no cover
         raise unittest.SkipTest("Django not installed")
     django_test_utils.setup_test_environment()
-    runner = django_test_simple.DjangoTestSuiteRunner()
+    runner = DjangoTestSuiteRunner()
     runner_state = runner.setup_databases()
     test_state.update({
         'runner': runner,
@@ -98,72 +94,88 @@ def tearDownModule():
     django_test_utils.teardown_test_environment()
 
 
-class StandardFactory(factory.django.DjangoModelFactory):
-    class Meta:
-        model = models.StandardModel
+if django is not None:
+    class StandardFactory(factory.django.DjangoModelFactory):
+        class Meta:
+            model = models.StandardModel
 
-    foo = factory.Sequence(lambda n: "foo%d" % n)
-
-
-class StandardFactoryWithPKField(factory.django.DjangoModelFactory):
-    class Meta:
-        model = models.StandardModel
-        django_get_or_create = ('pk',)
-
-    foo = factory.Sequence(lambda n: "foo%d" % n)
-    pk = None
+        foo = factory.Sequence(lambda n: "foo%d" % n)
 
 
-class NonIntegerPkFactory(factory.django.DjangoModelFactory):
-    class Meta:
-        model = models.NonIntegerPk
+    class StandardFactoryWithPKField(factory.django.DjangoModelFactory):
+        class Meta:
+            model = models.StandardModel
+            django_get_or_create = ('pk',)
 
-    foo = factory.Sequence(lambda n: "foo%d" % n)
-    bar = ''
-
-
-class AbstractBaseFactory(factory.django.DjangoModelFactory):
-    class Meta:
-        model = models.AbstractBase
-        abstract = True
-
-    foo = factory.Sequence(lambda n: "foo%d" % n)
+        foo = factory.Sequence(lambda n: "foo%d" % n)
+        pk = None
 
 
-class ConcreteSonFactory(AbstractBaseFactory):
-    class Meta:
-        model = models.ConcreteSon
+    class NonIntegerPkFactory(factory.django.DjangoModelFactory):
+        class Meta:
+            model = models.NonIntegerPk
+
+        foo = factory.Sequence(lambda n: "foo%d" % n)
+        bar = ''
 
 
-class AbstractSonFactory(AbstractBaseFactory):
-    class Meta:
-        model = models.AbstractSon
+    class MultifieldModelFactory(factory.django.DjangoModelFactory):
+        class Meta:
+            model = models.MultifieldModel
+            django_get_or_create = ['slug']
+
+        text = factory.Faker('text')
 
 
-class ConcreteGrandSonFactory(AbstractBaseFactory):
-    class Meta:
-        model = models.ConcreteGrandSon
+    class AbstractBaseFactory(factory.django.DjangoModelFactory):
+        class Meta:
+            model = models.AbstractBase
+            abstract = True
+
+        foo = factory.Sequence(lambda n: "foo%d" % n)
 
 
-class WithFileFactory(factory.django.DjangoModelFactory):
-    class Meta:
-        model = models.WithFile
-
-    if django is not None:
-        afile = factory.django.FileField()
+    class ConcreteSonFactory(AbstractBaseFactory):
+        class Meta:
+            model = models.ConcreteSon
 
 
-class WithImageFactory(factory.django.DjangoModelFactory):
-    class Meta:
-        model = models.WithImage
-
-    if django is not None:
-        animage = factory.django.ImageField()
+    class AbstractSonFactory(AbstractBaseFactory):
+        class Meta:
+            model = models.AbstractSon
 
 
-class WithSignalsFactory(factory.django.DjangoModelFactory):
-    class Meta:
-        model = models.WithSignals
+    class ConcreteGrandSonFactory(AbstractBaseFactory):
+        class Meta:
+            model = models.ConcreteGrandSon
+
+
+    class WithFileFactory(factory.django.DjangoModelFactory):
+        class Meta:
+            model = models.WithFile
+
+        if django is not None:
+            afile = factory.django.FileField()
+
+
+    class WithImageFactory(factory.django.DjangoModelFactory):
+        class Meta:
+            model = models.WithImage
+
+        if django is not None:
+            animage = factory.django.ImageField()
+
+
+    class WithSignalsFactory(factory.django.DjangoModelFactory):
+        class Meta:
+            model = models.WithSignals
+
+
+    class WithCustomManagerFactory(factory.django.DjangoModelFactory):
+        class Meta:
+            model = models.WithCustomManager
+
+        foo = factory.Sequence(lambda n: "foo%d" % n)
 
 
 @unittest.skipIf(django is None, "Django not installed.")
@@ -174,6 +186,16 @@ class ModelTests(django_test.TestCase):
 
         self.assertRaises(factory.FactoryError, UnsetModelFactory.create)
 
+    def test_cross_database(self):
+        class OtherDBFactory(factory.django.DjangoModelFactory):
+            class Meta:
+                model = models.StandardModel
+                database = 'replica'
+
+        obj = OtherDBFactory()
+        self.assertFalse(models.StandardModel.objects.exists())
+        self.assertEqual(obj, models.StandardModel.objects.using('replica').get())
+
 
 @unittest.skipIf(django is None, "Django not installed.")
 class DjangoPkSequenceTestCase(django_test.TestCase):
@@ -183,33 +205,56 @@ class DjangoPkSequenceTestCase(django_test.TestCase):
 
     def test_pk_first(self):
         std = StandardFactory.build()
-        self.assertEqual('foo1', std.foo)
+        self.assertEqual('foo0', std.foo)
 
     def test_pk_many(self):
         std1 = StandardFactory.build()
         std2 = StandardFactory.build()
-        self.assertEqual('foo1', std1.foo)
-        self.assertEqual('foo2', std2.foo)
+        self.assertEqual('foo0', std1.foo)
+        self.assertEqual('foo1', std2.foo)
 
     def test_pk_creation(self):
         std1 = StandardFactory.create()
-        self.assertEqual('foo1', std1.foo)
+        self.assertEqual('foo0', std1.foo)
         self.assertEqual(1, std1.pk)
 
         StandardFactory.reset_sequence()
         std2 = StandardFactory.create()
-        self.assertEqual('foo2', std2.foo)
+        self.assertEqual('foo0', std2.foo)
         self.assertEqual(2, std2.pk)
 
     def test_pk_force_value(self):
         std1 = StandardFactory.create(pk=10)
-        self.assertEqual('foo1', std1.foo)  # sequence was set before pk
+        self.assertEqual('foo0', std1.foo)  # sequence is unrelated to pk
         self.assertEqual(10, std1.pk)
 
         StandardFactory.reset_sequence()
         std2 = StandardFactory.create()
-        self.assertEqual('foo11', std2.foo)
+        self.assertEqual('foo0', std2.foo)
         self.assertEqual(11, std2.pk)
+
+
+@unittest.skipIf(django is None, "Django not installed.")
+class DjangoGetOrCreateTests(django_test.TestCase):
+    def test_simple_call(self):
+        obj1 = MultifieldModelFactory(slug='slug1')
+        obj2 = MultifieldModelFactory(slug='slug1')
+        obj3 = MultifieldModelFactory(slug='alt')
+
+        self.assertEqual(obj1, obj2)
+        self.assertEqual(2, models.MultifieldModel.objects.count())
+
+    def test_missing_arg(self):
+        with self.assertRaises(factory.FactoryError):
+            MultifieldModelFactory()
+
+    def test_multicall(self):
+        objs = MultifieldModelFactory.create_batch(6,
+            slug=factory.Iterator(['main', 'alt']),
+        )
+        self.assertEqual(6, len(objs))
+        self.assertEqual(2, len(set(objs)))
+        self.assertEqual(2, models.MultifieldModel.objects.count())
 
 
 @unittest.skipIf(django is None, "Django not installed.")
@@ -221,12 +266,12 @@ class DjangoPkForceTestCase(django_test.TestCase):
     def test_no_pk(self):
         std = StandardFactoryWithPKField()
         self.assertIsNotNone(std.pk)
-        self.assertEqual('foo1', std.foo)
+        self.assertEqual('foo0', std.foo)
 
     def test_force_pk(self):
         std = StandardFactoryWithPKField(pk=42)
         self.assertIsNotNone(std.pk)
-        self.assertEqual('foo1', std.foo)
+        self.assertEqual('foo0', std.foo)
 
     def test_reuse_pk(self):
         std1 = StandardFactoryWithPKField(foo='bar')
@@ -260,7 +305,7 @@ class DjangoModelLoadingTestCase(django_test.TestCase):
     def test_inherited_loading(self):
         """Proper loading of a model within 'child' factories.
 
-        See https://github.com/rbarrois/factory_boy/issues/109.
+        See https://github.com/FactoryBoy/factory_boy/issues/109.
         """
         class ExampleFactory(factory.DjangoModelFactory):
             class Meta:
@@ -275,7 +320,7 @@ class DjangoModelLoadingTestCase(django_test.TestCase):
     def test_inherited_loading_and_sequence(self):
         """Proper loading of a model within 'child' factories.
 
-        See https://github.com/rbarrois/factory_boy/issues/109.
+        See https://github.com/FactoryBoy/factory_boy/issues/109.
         """
         class ExampleFactory(factory.DjangoModelFactory):
             class Meta:
@@ -295,9 +340,9 @@ class DjangoModelLoadingTestCase(django_test.TestCase):
         self.assertEqual(models.StandardModel, e1.__class__)
         self.assertEqual(models.StandardSon, e2.__class__)
         self.assertEqual(models.StandardModel, e3.__class__)
-        self.assertEqual(1, e1.foo)
-        self.assertEqual(2, e2.foo)
-        self.assertEqual(3, e3.foo)
+        self.assertEqual(0, e1.foo)
+        self.assertEqual(1, e2.foo)
+        self.assertEqual(2, e3.foo)
 
 
 @unittest.skipIf(django is None, "Django not installed.")
@@ -308,23 +353,23 @@ class DjangoNonIntegerPkTestCase(django_test.TestCase):
 
     def test_first(self):
         nonint = NonIntegerPkFactory.build()
-        self.assertEqual('foo1', nonint.foo)
+        self.assertEqual('foo0', nonint.foo)
 
     def test_many(self):
         nonint1 = NonIntegerPkFactory.build()
         nonint2 = NonIntegerPkFactory.build()
 
-        self.assertEqual('foo1', nonint1.foo)
-        self.assertEqual('foo2', nonint2.foo)
+        self.assertEqual('foo0', nonint1.foo)
+        self.assertEqual('foo1', nonint2.foo)
 
     def test_creation(self):
         nonint1 = NonIntegerPkFactory.create()
-        self.assertEqual('foo1', nonint1.foo)
-        self.assertEqual('foo1', nonint1.pk)
+        self.assertEqual('foo0', nonint1.foo)
+        self.assertEqual('foo0', nonint1.pk)
 
         NonIntegerPkFactory.reset_sequence()
         nonint2 = NonIntegerPkFactory.build()
-        self.assertEqual('foo1', nonint2.foo)
+        self.assertEqual('foo0', nonint2.foo)
 
     def test_force_pk(self):
         nonint1 = NonIntegerPkFactory.create(pk='foo10')
@@ -333,8 +378,8 @@ class DjangoNonIntegerPkTestCase(django_test.TestCase):
 
         NonIntegerPkFactory.reset_sequence()
         nonint2 = NonIntegerPkFactory.create()
-        self.assertEqual('foo1', nonint2.foo)
-        self.assertEqual('foo1', nonint2.pk)
+        self.assertEqual('foo0', nonint2.foo)
+        self.assertEqual('foo0', nonint2.pk)
 
 
 @unittest.skipIf(django is None, "Django not installed.")
@@ -348,6 +393,48 @@ class DjangoAbstractBaseSequenceTestCase(django_test.TestCase):
         """The sequence of the concrete grandson of an abstract model should be autonomous."""
         obj = ConcreteGrandSonFactory()
         self.assertEqual(1, obj.pk)
+
+    def test_optional_abstract(self):
+        """Users need not describe the factory for an abstract model as abstract."""
+        class AbstractBaseFactory(factory.django.DjangoModelFactory):
+            class Meta:
+                model = models.AbstractBase
+
+            foo = factory.Sequence(lambda n: "foo%d" % n)
+
+        class ConcreteSonFactory(AbstractBaseFactory):
+            class Meta:
+                model = models.ConcreteSon
+
+        obj = ConcreteSonFactory()
+        self.assertEqual(1, obj.pk)
+        self.assertEqual("foo0", obj.foo)
+
+
+@unittest.skipIf(django is None, "Django not installed.")
+class DjangoRelatedFieldTestCase(django_test.TestCase):
+
+    @classmethod
+    def setUpClass(cls):
+        super(DjangoRelatedFieldTestCase, cls).setUpClass()
+        class PointedFactory(factory.django.DjangoModelFactory):
+            class Meta:
+                model = models.PointedModel
+            foo = 'ahah'
+
+        class PointerFactory(factory.django.DjangoModelFactory):
+            class Meta:
+                model = models.PointingModel
+            pointed = factory.SubFactory(PointedFactory, foo='hihi')
+            foo = 'bar'
+
+        cls.PointedFactory = PointedFactory
+        cls.PointerFactory = PointerFactory
+
+    def test_direct_related_create(self):
+        ptr = self.PointerFactory()
+        self.assertEqual('hihi', ptr.pointed.foo)
+        self.assertEqual(ptr.pointed, models.PointedModel.objects.get())
 
 
 @unittest.skipIf(django is None, "Django not installed.")
@@ -363,6 +450,9 @@ class DjangoFileFieldTestCase(unittest.TestCase):
         o = WithFileFactory.build()
         self.assertIsNone(o.pk)
         self.assertEqual(b'', o.afile.read())
+        self.assertEqual('example.dat', o.afile.name)
+
+        o.save()
         self.assertEqual('django/example.dat', o.afile.name)
 
     def test_default_create(self):
@@ -374,19 +464,26 @@ class DjangoFileFieldTestCase(unittest.TestCase):
     def test_with_content(self):
         o = WithFileFactory.build(afile__data='foo')
         self.assertIsNone(o.pk)
+
+        # Django only allocates the full path on save()
+        o.save()
         self.assertEqual(b'foo', o.afile.read())
         self.assertEqual('django/example.dat', o.afile.name)
 
     def test_with_file(self):
         with open(testdata.TESTFILE_PATH, 'rb') as f:
             o = WithFileFactory.build(afile__from_file=f)
-        self.assertIsNone(o.pk)
+            o.save()
+
         self.assertEqual(b'example_data\n', o.afile.read())
         self.assertEqual('django/example.data', o.afile.name)
 
     def test_with_path(self):
         o = WithFileFactory.build(afile__from_path=testdata.TESTFILE_PATH)
         self.assertIsNone(o.pk)
+
+        # Django only allocates the full path on save()
+        o.save()
         self.assertEqual(b'example_data\n', o.afile.read())
         self.assertEqual('django/example.data', o.afile.name)
 
@@ -396,7 +493,9 @@ class DjangoFileFieldTestCase(unittest.TestCase):
                 afile__from_file=f,
                 afile__from_path=''
             )
-        self.assertIsNone(o.pk)
+            # Django only allocates the full path on save()
+            o.save()
+
         self.assertEqual(b'example_data\n', o.afile.read())
         self.assertEqual('django/example.data', o.afile.name)
 
@@ -406,6 +505,9 @@ class DjangoFileFieldTestCase(unittest.TestCase):
             afile__from_file=None,
         )
         self.assertIsNone(o.pk)
+
+        # Django only allocates the full path on save()
+        o.save()
         self.assertEqual(b'example_data\n', o.afile.read())
         self.assertEqual('django/example.data', o.afile.name)
 
@@ -421,16 +523,24 @@ class DjangoFileFieldTestCase(unittest.TestCase):
             afile__filename='example.foo',
         )
         self.assertIsNone(o.pk)
+
+        # Django only allocates the full path on save()
+        o.save()
         self.assertEqual(b'example_data\n', o.afile.read())
         self.assertEqual('django/example.foo', o.afile.name)
 
     def test_existing_file(self):
         o1 = WithFileFactory.build(afile__from_path=testdata.TESTFILE_PATH)
+        o1.save()
+        self.assertEqual('django/example.data', o1.afile.name)
 
-        o2 = WithFileFactory.build(afile=o1.afile)
+        o2 = WithFileFactory.build(afile__from_file=o1.afile)
         self.assertIsNone(o2.pk)
+        o2.save()
+
         self.assertEqual(b'example_data\n', o2.afile.read())
-        self.assertEqual('django/example_1.data', o2.afile.name)
+        self.assertNotEqual('django/example.data', o2.afile.name)
+        self.assertRegexpMatches(o2.afile.name, r'django/example_\w+.data')
 
     def test_no_file(self):
         o = WithFileFactory.build(afile=None)
@@ -451,6 +561,8 @@ class DjangoImageFieldTestCase(unittest.TestCase):
     def test_default_build(self):
         o = WithImageFactory.build()
         self.assertIsNone(o.pk)
+        o.save()
+
         self.assertEqual(100, o.animage.width)
         self.assertEqual(100, o.animage.height)
         self.assertEqual('django/example.jpg', o.animage.name)
@@ -458,13 +570,28 @@ class DjangoImageFieldTestCase(unittest.TestCase):
     def test_default_create(self):
         o = WithImageFactory.create()
         self.assertIsNotNone(o.pk)
+        o.save()
+
         self.assertEqual(100, o.animage.width)
         self.assertEqual(100, o.animage.height)
         self.assertEqual('django/example.jpg', o.animage.name)
 
+    def test_complex_create(self):
+        o = WithImageFactory.create(
+            size=10,
+            animage__filename=factory.Sequence(lambda n: 'img%d.jpg' % n),
+            __sequence=42,
+            animage__width=factory.SelfAttribute('..size'),
+            animage__height=factory.SelfAttribute('width'),
+        )
+        self.assertIsNotNone(o.pk)
+        self.assertEqual('django/img42.jpg', o.animage.name)
+
     def test_with_content(self):
         o = WithImageFactory.build(animage__width=13, animage__color='red')
         self.assertIsNone(o.pk)
+        o.save()
+
         self.assertEqual(13, o.animage.width)
         self.assertEqual(13, o.animage.height)
         self.assertEqual('django/example.jpg', o.animage.name)
@@ -478,6 +605,8 @@ class DjangoImageFieldTestCase(unittest.TestCase):
     def test_gif(self):
         o = WithImageFactory.build(animage__width=13, animage__color='blue', animage__format='GIF')
         self.assertIsNone(o.pk)
+        o.save()
+
         self.assertEqual(13, o.animage.width)
         self.assertEqual(13, o.animage.height)
         self.assertEqual('django/example.jpg', o.animage.name)
@@ -491,7 +620,8 @@ class DjangoImageFieldTestCase(unittest.TestCase):
     def test_with_file(self):
         with open(testdata.TESTIMAGE_PATH, 'rb') as f:
             o = WithImageFactory.build(animage__from_file=f)
-        self.assertIsNone(o.pk)
+            o.save()
+
         # Image file for a 42x42 green jpeg: 301 bytes long.
         self.assertEqual(301, len(o.animage.read()))
         self.assertEqual('django/example.jpeg', o.animage.name)
@@ -499,6 +629,8 @@ class DjangoImageFieldTestCase(unittest.TestCase):
     def test_with_path(self):
         o = WithImageFactory.build(animage__from_path=testdata.TESTIMAGE_PATH)
         self.assertIsNone(o.pk)
+        o.save()
+
         # Image file for a 42x42 green jpeg: 301 bytes long.
         self.assertEqual(301, len(o.animage.read()))
         self.assertEqual('django/example.jpeg', o.animage.name)
@@ -509,7 +641,8 @@ class DjangoImageFieldTestCase(unittest.TestCase):
                 animage__from_file=f,
                 animage__from_path=''
             )
-        self.assertIsNone(o.pk)
+            o.save()
+
         # Image file for a 42x42 green jpeg: 301 bytes long.
         self.assertEqual(301, len(o.animage.read()))
         self.assertEqual('django/example.jpeg', o.animage.name)
@@ -520,6 +653,8 @@ class DjangoImageFieldTestCase(unittest.TestCase):
             animage__from_file=None,
         )
         self.assertIsNone(o.pk)
+        o.save()
+
         # Image file for a 42x42 green jpeg: 301 bytes long.
         self.assertEqual(301, len(o.animage.read()))
         self.assertEqual('django/example.jpeg', o.animage.name)
@@ -536,23 +671,44 @@ class DjangoImageFieldTestCase(unittest.TestCase):
             animage__filename='example.foo',
         )
         self.assertIsNone(o.pk)
+        o.save()
+
         # Image file for a 42x42 green jpeg: 301 bytes long.
         self.assertEqual(301, len(o.animage.read()))
         self.assertEqual('django/example.foo', o.animage.name)
 
     def test_existing_file(self):
         o1 = WithImageFactory.build(animage__from_path=testdata.TESTIMAGE_PATH)
+        o1.save()
 
-        o2 = WithImageFactory.build(animage=o1.animage)
+        o2 = WithImageFactory.build(animage__from_file=o1.animage)
         self.assertIsNone(o2.pk)
+        o2.save()
+
         # Image file for a 42x42 green jpeg: 301 bytes long.
         self.assertEqual(301, len(o2.animage.read()))
-        self.assertEqual('django/example_1.jpeg', o2.animage.name)
+        self.assertNotEqual('django/example.jpeg', o2.animage.name)
+        self.assertRegexpMatches(o2.animage.name, r'django/example_\w+.jpeg')
 
     def test_no_file(self):
         o = WithImageFactory.build(animage=None)
         self.assertIsNone(o.pk)
         self.assertFalse(o.animage)
+
+    def _img_test_func(self):
+        img = Image.new('RGB', (32,32), 'blue')
+        img_io = BytesIO()
+        img.save(img_io, format='JPEG')
+        img_io.seek(0)
+        return img_io
+
+    def test_with_func(self):
+        o = WithImageFactory.build(animage__from_func=self._img_test_func)
+        self.assertIsNone(o.pk)
+        i = Image.open(o.animage.file)
+        self.assertEqual('JPEG', i.format)
+        self.assertEqual(32, i.width)
+        self.assertEqual(32, i.height)
 
 
 @unittest.skipIf(django is None, "Django not installed.")
@@ -585,6 +741,19 @@ class PreventSignalsTestCase(unittest.TestCase):
 
         self.assertSignalsReactivated()
 
+    def test_signal_cache(self):
+        with factory.django.mute_signals(signals.pre_save, signals.post_save):
+            signals.post_save.connect(self.handlers.mute_block_receiver)
+            WithSignalsFactory()
+
+        self.assertTrue(self.handlers.mute_block_receiver.call_count, 1)
+        self.assertEqual(self.handlers.pre_init.call_count, 1)
+        self.assertFalse(self.handlers.pre_save.called)
+        self.assertFalse(self.handlers.post_save.called)
+
+        self.assertSignalsReactivated()
+        self.assertTrue(self.handlers.mute_block_receiver.call_count, 1)
+
     def test_class_decorator(self):
         @factory.django.mute_signals(signals.pre_save, signals.post_save)
         class WithSignalsDecoratedFactory(factory.django.DjangoModelFactory):
@@ -594,6 +763,27 @@ class PreventSignalsTestCase(unittest.TestCase):
         WithSignalsDecoratedFactory()
 
         self.assertEqual(self.handlers.pre_init.call_count, 1)
+        self.assertFalse(self.handlers.pre_save.called)
+        self.assertFalse(self.handlers.post_save.called)
+
+        self.assertSignalsReactivated()
+
+    def test_class_decorator_with_subfactory(self):
+        @factory.django.mute_signals(signals.pre_save, signals.post_save)
+        class WithSignalsDecoratedFactory(factory.django.DjangoModelFactory):
+            class Meta:
+                model = models.WithSignals
+
+            @factory.post_generation
+            def post(obj, create, extracted, **kwargs):
+                if not extracted:
+                    WithSignalsDecoratedFactory.create(post=42)
+
+        # This will disable the signals (twice), create two objects,
+        # and reactivate the signals.
+        WithSignalsDecoratedFactory()
+
+        self.assertEqual(self.handlers.pre_init.call_count, 2)
         self.assertFalse(self.handlers.pre_save.called)
         self.assertFalse(self.handlers.post_save.called)
 
@@ -640,6 +830,24 @@ class PreventSignalsTestCase(unittest.TestCase):
         self.assertFalse(self.handlers.post_save.called)
 
         self.assertSignalsReactivated()
+
+
+@unittest.skipIf(django is None, "Django not installed.")
+class DjangoCustomManagerTestCase(unittest.TestCase):
+
+    def test_extra_args(self):
+        # Our CustomManager will remove the 'arg=' argument.
+        model = WithCustomManagerFactory(arg='foo')
+
+    def test_with_manager_on_abstract(self):
+        class ObjFactory(factory.django.DjangoModelFactory):
+            class Meta:
+                model = models.FromAbstractWithCustomManager
+
+        # Our CustomManager will remove the 'arg=' argument,
+        # invalid for the actual model.
+        ObjFactory.create(arg='invalid')
+
 
 if __name__ == '__main__':  # pragma: no cover
     unittest.main()

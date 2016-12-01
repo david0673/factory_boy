@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
-# Copyright (c) 2010 Mark Sandstrom
-# Copyright (c) 2011-2013 Raphaël Barrois
+# Copyright (c) 2015 Raphaël Barrois
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to deal
@@ -20,30 +19,37 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 # THE SOFTWARE.
 
-"""Tests for deprecated features."""
+from flask import Flask
+from flask.ext.sqlalchemy import SQLAlchemy
 
-import warnings
-
-import factory
-
-from .compat import mock, unittest
-from . import tools
+app = Flask(__name__)
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:////tmp/test.db'
+db = SQLAlchemy(app)
 
 
-class DeprecationTests(unittest.TestCase):
-    def test_factory_for(self):
-        class Foo(object):
-            pass
+class User(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    username = db.Column(db.String(80), unique=True)
+    email = db.Column(db.String(120), unique=True)
 
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter('always')
-            class FooFactory(factory.Factory):
-                FACTORY_FOR = Foo
+    def __init__(self, username, email):
+        self.username = username
+        self.email = email
 
-            self.assertEqual(1, len(w))
-            warning = w[0]
-            # Message is indeed related to the current file
-            # This is to ensure error messages are readable by end users.
-            self.assertIn(warning.filename, __file__)
-            self.assertIn('FACTORY_FOR', str(warning.message))
-            self.assertIn('model', str(warning.message))
+    def __repr__(self):
+        return '<User %r>' % self.username
+
+
+class UserLog(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    message = db.Column(db.String(1000))
+
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'))
+    user = db.relationship('User', backref=db.backref('logs', lazy='dynamic'))
+
+    def __init__(self, message, user):
+        self.message = message
+        self.user = user
+
+    def __repr__(self):
+        return '<Log for %r: %s>' % (self.user, self.message)

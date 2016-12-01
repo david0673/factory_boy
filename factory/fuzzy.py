@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # Copyright (c) 2010 Mark Sandstrom
-# Copyright (c) 2011-2013 Raphaël Barrois
+# Copyright (c) 2011-2015 Raphaël Barrois
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to deal
@@ -32,6 +32,25 @@ import datetime
 
 from . import compat
 from . import declarations
+
+
+_random = random.Random()
+
+
+def get_random_state():
+    """Retrieve the state of factory.fuzzy's random generator."""
+    return _random.getstate()
+
+
+def set_random_state(state):
+    """Force-set the state of factory.fuzzy's random generator."""
+    return _random.setstate(state)
+
+
+def reseed_random(seed):
+    """Reseed factory.fuzzy's random generator."""
+    r = random.Random(seed)
+    set_random_state(r.getstate())
 
 
 class BaseFuzzyAttribute(declarations.OrderedDeclaration):
@@ -80,8 +99,7 @@ class FuzzyText(BaseFuzzyAttribute):
     not important.
     """
 
-    def __init__(self, prefix='', length=12, suffix='',
-        chars=string.ascii_letters, **kwargs):
+    def __init__(self, prefix='', length=12, suffix='', chars=string.ascii_letters, **kwargs):
         super(FuzzyText, self).__init__(**kwargs)
         self.prefix = prefix
         self.suffix = suffix
@@ -89,19 +107,27 @@ class FuzzyText(BaseFuzzyAttribute):
         self.chars = tuple(chars)  # Unroll iterators
 
     def fuzz(self):
-        chars = [random.choice(self.chars) for _i in range(self.length)]
+        chars = [_random.choice(self.chars) for _i in range(self.length)]
         return self.prefix + ''.join(chars) + self.suffix
 
 
 class FuzzyChoice(BaseFuzzyAttribute):
-    """Handles fuzzy choice of an attribute."""
+    """Handles fuzzy choice of an attribute.
+
+    Args:
+        choices (iterable): An iterable yielding options; will only be unrolled
+            on the first call.
+    """
 
     def __init__(self, choices, **kwargs):
-        self.choices = list(choices)
+        self.choices = None
+        self.choices_generator = choices
         super(FuzzyChoice, self).__init__(**kwargs)
 
     def fuzz(self):
-        return random.choice(self.choices)
+        if self.choices is None:
+            self.choices = list(self.choices_generator)
+        return _random.choice(self.choices)
 
 
 class FuzzyInteger(BaseFuzzyAttribute):
@@ -119,7 +145,7 @@ class FuzzyInteger(BaseFuzzyAttribute):
         super(FuzzyInteger, self).__init__(**kwargs)
 
     def fuzz(self):
-        return random.randrange(self.low, self.high + 1, self.step)
+        return _random.randrange(self.low, self.high + 1, self.step)
 
 
 class FuzzyDecimal(BaseFuzzyAttribute):
@@ -137,7 +163,7 @@ class FuzzyDecimal(BaseFuzzyAttribute):
         super(FuzzyDecimal, self).__init__(**kwargs)
 
     def fuzz(self):
-        base = compat.float_to_decimal(random.uniform(self.low, self.high))
+        base = decimal.Decimal(str(_random.uniform(self.low, self.high)))
         return base.quantize(decimal.Decimal(10) ** -self.precision)
 
 
@@ -155,7 +181,7 @@ class FuzzyFloat(BaseFuzzyAttribute):
         super(FuzzyFloat, self).__init__(**kwargs)
 
     def fuzz(self):
-        return random.uniform(self.low, self.high)
+        return _random.uniform(self.low, self.high)
 
 
 class FuzzyDate(BaseFuzzyAttribute):
@@ -175,7 +201,7 @@ class FuzzyDate(BaseFuzzyAttribute):
         self.end_date = end_date.toordinal()
 
     def fuzz(self):
-        return datetime.date.fromordinal(random.randint(self.start_date, self.end_date))
+        return datetime.date.fromordinal(_random.randint(self.start_date, self.end_date))
 
 
 class BaseFuzzyDateTime(BaseFuzzyAttribute):
@@ -189,6 +215,9 @@ class BaseFuzzyDateTime(BaseFuzzyAttribute):
             raise ValueError(
                 """%s boundaries should have start <= end, got %r > %r""" % (
                     self.__class__.__name__, start_dt, end_dt))
+
+    def _now(self):
+        raise NotImplementedError()
 
     def __init__(self, start_dt, end_dt=None,
                  force_year=None, force_month=None, force_day=None,
@@ -215,7 +244,7 @@ class BaseFuzzyDateTime(BaseFuzzyAttribute):
         delta = self.end_dt - self.start_dt
         microseconds = delta.microseconds + 1000000 * (delta.seconds + (delta.days * 86400))
 
-        offset = random.randint(0, microseconds)
+        offset = _random.randint(0, microseconds)
         result = self.start_dt + datetime.timedelta(microseconds=offset)
 
         if self.force_year is not None:
@@ -270,10 +299,10 @@ class FuzzyDateTime(BaseFuzzyDateTime):
     def _check_bounds(self, start_dt, end_dt):
         if start_dt.tzinfo is None:
             raise ValueError(
-                "FuzzyDateTime only handles aware datetimes, got start=%r"
+                "FuzzyDateTime requires timezone-aware datetimes, got start=%r"
                 % start_dt)
         if end_dt.tzinfo is None:
             raise ValueError(
-                "FuzzyDateTime only handles aware datetimes, got end=%r"
+                "FuzzyDateTime requires timezone-aware datetimes, got end=%r"
                 % end_dt)
         super(FuzzyDateTime, self)._check_bounds(start_dt, end_dt)

@@ -19,24 +19,19 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 # THE SOFTWARE.
 
-"""Compatibility tools for tests"""
+"""Helper to test circular factory dependencies."""
 
-import sys
+import factory
 
-is_python2 = (sys.version_info[0] == 2)
+class TreeElement(object):
+    def __init__(self, name, parent):
+        self.parent = parent
+        self.name = name
 
-if sys.version_info[0:2] < (2, 7):  # pragma: no cover
-    import unittest2 as unittest
-else:  # pragma: no cover
-    import unittest
 
-if sys.version_info[0] == 2:  # pragma: no cover
-    import StringIO as io
-else:  # pragma: no cover
-    import io
+class TreeElementFactory(factory.Factory):
+    class Meta:
+        model = TreeElement
 
-if sys.version_info[0:2] < (3, 3):  # pragma: no cover
-    import mock
-else:  # pragma: no cover
-    from unittest import mock
-
+    name = factory.Sequence(lambda n: "tree%s" % n)
+    parent = factory.SubFactory('tests.cyclic.self_ref.TreeElementFactory')

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # Copyright (c) 2010 Mark Sandstrom
-# Copyright (c) 2011-2013 Raphaël Barrois
+# Copyright (c) 2011-2015 Raphaël Barrois
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to deal
@@ -20,11 +20,14 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 # THE SOFTWARE.
 
+from __future__ import unicode_literals
+
+import collections
 import logging
-import warnings
 
 from . import containers
 from . import declarations
+from . import errors
 from . import utils
 
 logger = logging.getLogger('factory.generate')
@@ -35,24 +38,8 @@ CREATE_STRATEGY = 'create'
 STUB_STRATEGY = 'stub'
 
 
-
-class FactoryError(Exception):
-    """Any exception raised by factory_boy."""
-
-
-class AssociatedClassError(FactoryError):
-    """Exception for Factory subclasses lacking Meta.model."""
-
-
-class UnknownStrategy(FactoryError):
-    """Raised when a factory uses an unknown strategy."""
-
-
-class UnsupportedStrategy(FactoryError):
-    """Raised when trying to use a strategy on an incompatible Factory."""
-
-
 # Factory metaclasses
+
 
 def get_factory_bases(bases):
     """Retrieve all FactoryMetaClass-derived bases from a list."""
@@ -83,7 +70,7 @@ class FactoryMetaClass(type):
         elif cls._meta.strategy == STUB_STRATEGY:
             return cls.stub(**kwargs)
         else:
-            raise UnknownStrategy('Unknown Meta.strategy: {0}'.format(
+            raise errors.UnknownStrategy('Unknown Meta.strategy: {0}'.format(
                 cls._meta.strategy))
 
     def __new__(mcs, class_name, bases, attrs):
@@ -108,23 +95,7 @@ class FactoryMetaClass(type):
             base_factory = None
 
         attrs_meta = attrs.pop('Meta', None)
-
-        oldstyle_attrs = {}
-        converted_attrs = {}
-        for old_name, new_name in base_factory._OLDSTYLE_ATTRIBUTES.items():
-            if old_name in attrs:
-                oldstyle_attrs[old_name] = new_name
-                converted_attrs[new_name] = attrs.pop(old_name)
-        if oldstyle_attrs:
-            warnings.warn(
-                "Declaring any of %s at class-level is deprecated"
-                " and will be removed in the future. Please set them"
-                " as %s attributes of a 'class Meta' attribute." % (
-                    ', '.join(oldstyle_attrs.keys()),
-                    ', '.join(oldstyle_attrs.values()),
-                ),
-                PendingDeprecationWarning, 2)
-            attrs_meta = type('Meta', (object,), converted_attrs)
+        attrs_params = attrs.pop('Params', None)
 
         base_meta = resolve_attribute('_meta', bases)
         options_class = resolve_attribute('_options_class', bases, FactoryOptions)
@@ -135,10 +106,12 @@ class FactoryMetaClass(type):
         new_class = super(FactoryMetaClass, mcs).__new__(
             mcs, class_name, bases, attrs)
 
-        meta.contribute_to_class(new_class,
+        meta.contribute_to_class(
+            new_class,
             meta=attrs_meta,
             base_meta=base_meta,
             base_factory=base_factory,
+            params=attrs_params,
         )
 
         return new_class
@@ -156,10 +129,21 @@ class BaseMeta:
 
 
 class OptionDefault(object):
-    def __init__(self, name, value, inherit=False):
+    """The default for an option.
+
+    Attributes:
+        name: str, the name of the option ('class Meta' attribute)
+        value: object, the default value for the option
+        inherit: bool, whether to inherit the value from the parent factory's `class Meta`
+            when no value is provided
+        checker: callable or None, an optional function used to detect invalid option
+            values at declaration time
+    """
+    def __init__(self, name, value, inherit=False, checker=None):
         self.name = name
         self.value = value
         self.inherit = inherit
+        self.checker = checker
 
     def apply(self, meta, base_meta):
         value = self.value
@@ -167,6 +151,10 @@ class OptionDefault(object):
             value = getattr(base_meta, self.name, value)
         if meta is not None:
             value = getattr(meta, self.name, value)
+
+        if self.checker is not None:
+            self.checker(meta, value)
+
         return value
 
     def __str__(self):
@@ -181,6 +169,16 @@ class FactoryOptions(object):
         self.base_factory = None
         self.declarations = {}
         self.postgen_declarations = {}
+        self.parameters = {}
+        self.parameters_dependencies = {}
+
+    @property
+    def sorted_postgen_declarations(self):
+        """Get sorted postgen declaration items."""
+        return sorted(
+            self.postgen_declarations.items(),
+            key=lambda item: item[1].creation_counter,
+        )
 
     def _build_default_options(self):
         """"Provide the default value for all allowed fields.
@@ -194,6 +192,7 @@ class FactoryOptions(object):
             OptionDefault('strategy', CREATE_STRATEGY, inherit=True),
             OptionDefault('inline_args', (), inherit=True),
             OptionDefault('exclude', (), inherit=True),
+            OptionDefault('rename', {}, inherit=True),
         ]
 
     def _fill_from_meta(self, meta, base_meta):
@@ -201,7 +200,8 @@ class FactoryOptions(object):
         if meta is None:
             meta_attrs = {}
         else:
-            meta_attrs = dict((k, v)
+            meta_attrs = dict(
+                (k, v)
                 for (k, v) in vars(meta).items()
                 if not k.startswith('_')
             )
@@ -214,11 +214,11 @@ class FactoryOptions(object):
 
         if meta_attrs:
             # Some attributes in the Meta aren't allowed here
-            raise TypeError("'class Meta' for %r got unknown attribute(s) %s"
-                    % (self.factory, ','.join(sorted(meta_attrs.keys()))))
+            raise TypeError(
+                "'class Meta' for %r got unknown attribute(s) %s"
+                % (self.factory, ','.join(sorted(meta_attrs.keys()))))
 
-    def contribute_to_class(self, factory,
-            meta=None, base_meta=None, base_factory=None):
+    def contribute_to_class(self, factory, meta=None, base_meta=None, base_factory=None, params=None):
 
         self.factory = factory
         self.base_factory = base_factory
@@ -236,12 +236,20 @@ class FactoryOptions(object):
                 continue
             self.declarations.update(parent._meta.declarations)
             self.postgen_declarations.update(parent._meta.postgen_declarations)
+            self.parameters.update(parent._meta.parameters)
 
         for k, v in vars(self.factory).items():
             if self._is_declaration(k, v):
                 self.declarations[k] = v
             if self._is_postgen_declaration(k, v):
                 self.postgen_declarations[k] = v
+
+        if params is not None:
+            for k, v in vars(params).items():
+                if not k.startswith('_'):
+                    self.parameters[k] = v
+
+        self.parameters_dependencies = self._compute_parameter_dependencies(self.parameters)
 
     def _get_counter_reference(self):
         """Identify which factory should be used for a shared counter."""
@@ -273,6 +281,32 @@ class FactoryOptions(object):
     def _is_postgen_declaration(self, name, value):
         """Captures instances of PostGenerationDeclaration."""
         return isinstance(value, declarations.PostGenerationDeclaration)
+
+    def _compute_parameter_dependencies(self, parameters):
+        """Find out in what order parameters should be called."""
+        # Warning: parameters only provide reverse dependencies; we reverse them into standard dependencies.
+        # deep_revdeps: set of fields a field depend indirectly upon
+        deep_revdeps = collections.defaultdict(set)
+        # Actual, direct dependencies
+        deps = collections.defaultdict(set)
+
+        for name, parameter in parameters.items():
+            if isinstance(parameter, declarations.ComplexParameter):
+                field_revdeps = parameter.get_revdeps(parameters)
+                if not field_revdeps:
+                    continue
+                deep_revdeps[name] = set.union(*(deep_revdeps[dep] for dep in field_revdeps))
+                deep_revdeps[name] |= set(field_revdeps)
+                for dep in field_revdeps:
+                    deps[dep].add(name)
+
+        # Check for cyclical dependencies
+        cyclic = [name for name, field_deps in deep_revdeps.items() if name in field_deps]
+        if cyclic:
+            raise errors.CyclicDefinitionError(
+                "Cyclic definition detected on %s' Params around %s"
+                % (self.factory, ', '.join(cyclic)))
+        return deps
 
     def __str__(self):
         return "<%s for %s>" % (self.__class__.__name__, self.factory.__class__.__name__)
@@ -313,22 +347,14 @@ class BaseFactory(object):
     """Factory base support for sequences, attributes and stubs."""
 
     # Backwards compatibility
-    UnknownStrategy = UnknownStrategy
-    UnsupportedStrategy = UnsupportedStrategy
+    UnknownStrategy = errors.UnknownStrategy
+    UnsupportedStrategy = errors.UnsupportedStrategy
 
     def __new__(cls, *args, **kwargs):
         """Would be called if trying to instantiate the class."""
-        raise FactoryError('You cannot instantiate BaseFactory')
+        raise errors.FactoryError('You cannot instantiate BaseFactory')
 
     _meta = FactoryOptions()
-
-    _OLDSTYLE_ATTRIBUTES = {
-        'FACTORY_FOR': 'model',
-        'ABSTRACT_FACTORY': 'abstract',
-        'FACTORY_STRATEGY': 'strategy',
-        'FACTORY_ARG_PARAMETERS': 'inline_args',
-        'FACTORY_HIDDEN_ARGS': 'exclude',
-    }
 
     # ID to use for the next 'declarations.Sequence' attribute.
     _counter = None
@@ -378,7 +404,7 @@ class BaseFactory(object):
         if cls._counter is None or cls._counter.for_class != cls:
             first_seq = cls._setup_next_sequence()
             cls._counter = _Counter(for_class=cls, seq=first_seq)
-            logger.debug("%r: Setting up next sequence (%d)", cls, first_seq)
+            logger.debug("%s: Setting up next sequence (%d)", cls, first_seq)
 
     @classmethod
     def _generate_next_sequence(cls):
@@ -416,10 +442,11 @@ class BaseFactory(object):
         if extra:
             force_sequence = extra.pop('__sequence', None)
         log_ctx = '%s.%s' % (cls.__module__, cls.__name__)
-        logger.debug('BaseFactory: Preparing %s.%s(extra=%r)',
+        logger.debug(
+            "BaseFactory: Preparing %s.%s(extra=%s)",
             cls.__module__,
             cls.__name__,
-            extra,
+            utils.log_repr(extra),
         )
         return containers.AttributeBuilder(cls, extra, log_ctx=log_ctx).build(
             create=create,
@@ -435,8 +462,14 @@ class BaseFactory(object):
                 retrieved DeclarationDict.
         """
         decls = cls._meta.declarations.copy()
-        decls.update(extra_defs)
+        decls.update(extra_defs or {})
         return decls
+
+    @classmethod
+    def _rename_fields(cls, **kwargs):
+        for old_name, new_name in cls._meta.rename.items():
+            kwargs[new_name] = kwargs.pop(old_name)
+        return kwargs
 
     @classmethod
     def _adjust_kwargs(cls, **kwargs):
@@ -467,16 +500,21 @@ class BaseFactory(object):
             **kwargs: arguments to pass to the creation function
         """
         model_class = cls._get_model_class()
+        kwargs = cls._rename_fields(**kwargs)
         kwargs = cls._adjust_kwargs(**kwargs)
 
         # Remove 'hidden' arguments.
         for arg in cls._meta.exclude:
             del kwargs[arg]
+        # Remove parameters, if defined
+        for arg in cls._meta.parameters:
+            kwargs.pop(arg, None)
 
         # Extract *args from **kwargs
         args = tuple(kwargs.pop(key) for key in cls._meta.inline_args)
 
-        logger.debug('BaseFactory: Generating %s.%s(%s)',
+        logger.debug(
+            "BaseFactory: Generating %s.%s(%s)",
             cls.__module__,
             cls.__name__,
             utils.log_pprint(args, kwargs),
@@ -495,15 +533,15 @@ class BaseFactory(object):
             attrs (dict): attributes to use for generating the object
         """
         if cls._meta.abstract:
-            raise FactoryError(
+            raise errors.FactoryError(
                 "Cannot generate instances of abstract factory %(f)s; "
                 "Ensure %(f)s.Meta.model is set and %(f)s.Meta.abstract "
                 "is either not set or False." % dict(f=cls.__name__))
 
         # Extract declarations used for post-generation
-        postgen_declarations = cls._meta.postgen_declarations
         postgen_attributes = {}
-        for name, decl in sorted(postgen_declarations.items()):
+
+        for name, decl in cls._meta.sorted_postgen_declarations:
             postgen_attributes[name] = decl.extract(name, attrs)
 
         # Generate the object
@@ -511,7 +549,7 @@ class BaseFactory(object):
 
         # Handle post-generation attributes
         results = {}
-        for name, decl in sorted(postgen_declarations.items()):
+        for name, decl in cls._meta.sorted_postgen_declarations:
             extraction_context = postgen_attributes[name]
             results[name] = decl.call(obj, create, extraction_context)
 
@@ -687,7 +725,9 @@ class BaseFactory(object):
         return cls.generate_batch(strategy, size, **kwargs)
 
 
-Factory = FactoryMetaClass('Factory', (BaseFactory,), {
+# Note: we're calling str() on the class name to avoid issues with Py2's type() expecting bytes
+# instead of unicode.
+Factory = FactoryMetaClass(str('Factory'), (BaseFactory,), {
     'Meta': BaseMeta,
     '__doc__': """Factory base with build and create support.
 
@@ -698,7 +738,7 @@ Factory = FactoryMetaClass('Factory', (BaseFactory,), {
 
 
 # Backwards compatibility
-Factory.AssociatedClassError = AssociatedClassError  # pylint: disable=W0201
+Factory.AssociatedClassError = errors.AssociatedClassError
 
 
 class StubFactory(Factory):
@@ -709,11 +749,11 @@ class StubFactory(Factory):
 
     @classmethod
     def build(cls, **kwargs):
-        raise UnsupportedStrategy()
+        return cls.stub(**kwargs)
 
     @classmethod
     def create(cls, **kwargs):
-        raise UnsupportedStrategy()
+        raise errors.UnsupportedStrategy()
 
 
 class BaseDictFactory(Factory):

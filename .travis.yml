@@ -1,19 +1,33 @@
+sudo: false
 language: python
 
-python:
-  - "2.6"
-  - "2.7"
-  - "3.2"
-  - "3.3"
-  - "pypy"
-
 script:
-  - python setup.py test
+  - tox
 
 install:
-  - if [[ $TRAVIS_PYTHON_VERSION = 2.6 ]]; then pip install unittest2 --use-mirrors; fi
-  - pip install Django sqlalchemy --use-mirrors
-  - if ! python --version 2>&1 | grep -q -i pypy ; then pip install Pillow --use-mirrors; fi
+  - pip install tox
+
+matrix:
+  include:
+    - python: "2.7"
+      env: TOXENV=py27-django110-alchemy10-mongoengine010
+    - python: "3.4"
+      env: TOXENV=py34-django110-alchemy10-mongoengine010
+    - python: "3.5"
+      env: TOXENV=py35-django110-alchemy10-mongoengine010
+
+    # Pypy
+    - python: "pypy"
+      env: TOXENV=py27-django110-alchemy10-mongoengine010
+
+    # Linting
+    - python: "3.5"
+      env: TOXENV=examples
+    - python: "3.5"
+      env: TOXENV=lint
+
+services:
+  - mongodb
 
 notifications:
   email: false

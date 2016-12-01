@@ -15,7 +15,7 @@ Django
 
 
 The first versions of factory_boy were designed specifically for Django,
-but the library has now evolved to be framework-independant.
+but the library has now evolved to be framework-independent.
 
 Most features should thus feel quite familiar to Django users.
 
@@ -35,20 +35,29 @@ All factories for a Django :class:`~django.db.models.Model` should use the
     * The :attr:`~factory.FactoryOptions.model` attribute also supports the ``'app.Model'``
       syntax
     * :func:`~factory.Factory.create()` uses :meth:`Model.objects.create() <django.db.models.query.QuerySet.create>`
-    * :func:`~factory.Factory._setup_next_sequence()` selects the next unused primary key value
     * When using :class:`~factory.RelatedFactory` or :class:`~factory.PostGeneration`
       attributes, the base object will be :meth:`saved <django.db.models.Model.save>`
       once all post-generation hooks have run.
 
-    .. attribute:: FACTORY_DJANGO_GET_OR_CREATE
 
-        .. deprecated:: 2.4.0
-                        See :attr:`DjangoOptions.django_get_or_create`.
+.. note:: With Django versions 1.8.0 to 1.8.3, it was no longer possible to call ``.build()``
+          on a factory if this factory used a :class:`~factory.SubFactory` pointing
+          to another model: Django refused to set a :class:`~djang.db.models.ForeignKey`
+          to an unsaved :class:`~django.db.models.Model` instance.
+
+          See https://code.djangoproject.com/ticket/10811 and https://code.djangoproject.com/ticket/25160 for details.
 
 
 .. class:: DjangoOptions(factory.base.FactoryOptions)
 
-    The ``class Meta`` on a :class:`~DjangoModelFactory` supports an extra parameter:
+    The ``class Meta`` on a :class:`~DjangoModelFactory` supports extra parameters:
+
+    .. attribute:: database
+
+        .. versionadded:: 2.5.0
+
+        All queries to the related model will be routed to the given database.
+        It defaults to ``'default'``.
 
     .. attribute:: django_get_or_create
 
@@ -87,22 +96,6 @@ All factories for a Django :class:`~django.db.models.Model` should use the
             [<User: john>, <User: jack>]
 
 
-.. note:: If a :class:`DjangoModelFactory` relates to an :obj:`~django.db.models.Options.abstract`
-          model, be sure to declare the :class:`DjangoModelFactory` as abstract:
-
-          .. code-block:: python
-
-              class MyAbstractModelFactory(factory.django.DjangoModelFactory):
-                  class Meta:
-                      model = models.MyAbstractModel
-                      abstract = True
-
-              class MyConcreteModelFactory(MyAbstractModelFactory):
-                  class Meta:
-                      model = models.MyConcreteModel
-
-          Otherwise, factory_boy will try to get the 'next PK' counter from the abstract model.
-
 
 Extra fields
 """"""""""""
@@ -117,7 +110,8 @@ Extra fields
         :param str from_path: Use data from the file located at ``from_path``,
                               and keep its filename
         :param file from_file: Use the contents of the provided file object; use its filename
-                               if available
+                               if available, unless ``filename`` is also provided.
+        :param func from_func: Use function that returns a file object
         :param bytes data: Use the provided bytes as file contents
         :param str filename: The filename for the FileField
 
@@ -150,6 +144,7 @@ Extra fields
                               and keep its filename
         :param file from_file: Use the contents of the provided file object; use its filename
                                if available
+        :param func from_func: Use function that returns a file object
         :param str filename: The filename for the ImageField
         :param int width: The width of the generated image (default: ``100``)
         :param int height: The height of the generated image (default: ``100``)
@@ -264,6 +259,34 @@ factory_boy supports `MongoEngine`_-style models, through the :class:`MongoEngin
 
               This feature makes it possible to use :class:`~factory.SubFactory` to create embedded document.
 
+A minimalist example:
+
+.. code-block:: python
+
+    import mongoengine
+
+    class Address(mongoengine.EmbeddedDocument):
+        street = mongoengine.StringField()
+
+    class Person(mongoengine.Document):
+        name = mongoengine.StringField()
+        address = mongoengine.EmbeddedDocumentField(Address)
+
+    import factory
+
+    class AddressFactory(factory.mongoengine.MongoEngineFactory):
+        class Meta:
+            model = Address
+
+        street = factory.Sequence(lambda n: 'street%d' % n)
+
+    class PersonFactory(factory.mongoengine.MongoEngineFactory):
+        class Meta:
+            model = Person
+
+        name = factory.Sequence(lambda n: 'name%d' % n)
+        address = factory.SubFactory(AddressFactory)
+
 
 SQLAlchemy
 ----------
@@ -284,12 +307,7 @@ To work, this class needs an `SQLAlchemy`_ session object affected to the :attr:
     This class provides the following features:
 
     * :func:`~factory.Factory.create()` uses :meth:`sqlalchemy.orm.session.Session.add`
-    * :func:`~factory.Factory._setup_next_sequence()` selects the next unused primary key value
 
-    .. attribute:: FACTORY_SESSION
-
-        .. deprecated:: 2.4.0
-                        See :attr:`~SQLAlchemyOptions.sqlalchemy_session`.
 
 .. class:: SQLAlchemyOptions(factory.base.FactoryOptions)
 
@@ -301,7 +319,11 @@ To work, this class needs an `SQLAlchemy`_ session object affected to the :attr:
         SQLAlchemy session to use to communicate with the database when creating
         an object through this :class:`SQLAlchemyModelFactory`.
 
-A (very) simple exemple:
+    .. attribute:: force_flush
+
+        Force a session flush() at the end of :func:`~factory.alchemy.SQLAlchemyModelFactory._create()`.
+
+A (very) simple example:
 
 .. code-block:: python
 
@@ -309,9 +331,8 @@ A (very) simple exemple:
     from sqlalchemy.ext.declarative import declarative_base
     from sqlalchemy.orm import scoped_session, sessionmaker
 
-    session = scoped_session(sessionmaker())
     engine = create_engine('sqlite://')
-    session.configure(bind=engine)
+    session = scoped_session(sessionmaker(bind=engine))
     Base = declarative_base()
 
 
@@ -324,8 +345,9 @@ A (very) simple exemple:
 
     Base.metadata.create_all(engine)
 
+    import factory
 
-    class UserFactory(SQLAlchemyModelFactory):
+    class UserFactory(factory.alchemy.SQLAlchemyModelFactory):
         class Meta:
             model = User
             sqlalchemy_session = session   # the SQLAlchemy session object
@@ -341,3 +363,112 @@ A (very) simple exemple:
     <User: User 1>
     >>> session.query(User).all()
     [<User: User 1>]
+
+
+Managing sessions
+"""""""""""""""""
+
+Since `SQLAlchemy`_ is a general purpose library,
+there is no "global" session management system.
+
+The most common pattern when working with unit tests and ``factory_boy``
+is to use `SQLAlchemy`_'s :class:`sqlalchemy.orm.scoping.scoped_session`:
+
+* The test runner configures some project-wide :class:`~sqlalchemy.orm.scoping.scoped_session`
+* Each :class:`~SQLAlchemyModelFactory` subclass uses this
+  :class:`~sqlalchemy.orm.scoping.scoped_session` as its :attr:`~SQLAlchemyOptions.sqlalchemy_session`
+* The :meth:`~unittest.TestCase.tearDown` method of tests calls
+  :meth:`Session.remove <sqlalchemy.orm.scoping.scoped_session.remove>`
+  to reset the session.
+
+.. note:: See the excellent :ref:`SQLAlchemy guide on scoped_session <sqlalchemy:unitofwork_contextual>`
+          for details of :class:`~sqlalchemy.orm.scoping.scoped_session`'s usage.
+
+          The basic idea is that declarative parts of the code (including factories)
+          need a simple way to access the "current session",
+          but that session will only be created and configured at a later point.
+
+          The :class:`~sqlalchemy.orm.scoping.scoped_session` handles this,
+          by virtue of only creating the session when a query is sent to the database.
+
+
+Here is an example layout:
+
+- A global (test-only?) file holds the :class:`~sqlalchemy.orm.scoping.scoped_session`:
+
+.. code-block:: python
+
+    # myprojet/test/common.py
+
+    from sqlalchemy import orm
+    Session = orm.scoped_session(orm.sessionmaker())
+
+
+- All factory access it:
+
+.. code-block:: python
+
+    # myproject/factories.py
+
+    import factory
+    import factory.alchemy
+
+    from . import models
+    from .test import common
+
+    class UserFactory(factory.alchemy.SQLAlchemyModelFactory):
+        class Meta:
+            model = models.User
+
+            # Use the not-so-global scoped_session
+            # Warning: DO NOT USE common.Session()!
+            sqlalchemy_session = common.Session
+
+        name = factory.Sequence(lambda n: "User %d" % n)
+
+
+- The test runner configures the :class:`~sqlalchemy.orm.scoping.scoped_session` when it starts:
+
+.. code-block:: python
+
+    # myproject/test/runtests.py
+
+    import sqlalchemy
+
+    from . import common
+
+    def runtests():
+        engine = sqlalchemy.create_engine('sqlite://')
+
+        # It's a scoped_session, and now is the time to configure it.
+        common.Session.configure(bind=engine)
+
+        run_the_tests
+
+
+- :class:`test cases <unittest.TestCase>` use this ``scoped_session``,
+  and clear it after each test (for isolation):
+
+.. code-block:: python
+
+    # myproject/test/test_stuff.py
+
+    import unittest
+
+    from . import common
+
+    class MyTest(unittest.TestCase):
+
+        def setUp(self):
+            # Prepare a new, clean session
+            self.session = common.Session()
+
+        def test_something(self):
+            u = factories.UserFactory()
+            self.assertEqual([u], self.session.query(User).all())
+
+        def tearDown(self):
+            # Rollback the session => no changes to the database
+            self.session.rollback()
+            # Remove it, so that the next test gets a new Session()
+            common.Session.remove()

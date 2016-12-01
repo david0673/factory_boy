@@ -31,6 +31,9 @@ try:
 except ImportError:
     mongoengine = None
 
+if os.environ.get('SKIP_MONGOENGINE') == '1':
+    mongoengine = None
+
 if mongoengine:
     from factory.mongoengine import MongoEngineFactory
 
@@ -61,10 +64,20 @@ class MongoEngineTestCase(unittest.TestCase):
     db_name = os.environ.get('MONGO_DATABASE', 'factory_boy_test')
     db_host = os.environ.get('MONGO_HOST', 'localhost')
     db_port = int(os.environ.get('MONGO_PORT', '27017'))
+    server_timeout_ms = int(os.environ.get('MONGO_TIMEOUT', '300'))
 
     @classmethod
     def setUpClass(cls):
-        cls.db = mongoengine.connect(cls.db_name, host=cls.db_host, port=cls.db_port)
+        from pymongo import read_preferences as mongo_rp
+        cls.db = mongoengine.connect(
+            db=cls.db_name,
+            host=cls.db_host,
+            port=cls.db_port,
+            # PyMongo>=2.1 requires an explicit read_preference.
+            read_preference=mongo_rp.ReadPreference.PRIMARY,
+            # PyMongo>=2.1 has a 20s timeout, use 100ms instead
+            serverselectiontimeoutms=cls.server_timeout_ms,
+        )
 
     @classmethod
     def tearDownClass(cls):

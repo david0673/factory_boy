@@ -117,6 +117,35 @@ This is achieved with the :class:`~factory.Sequence` declaration:
                     return 'user%d' % n
 
 
+LazyFunction
+------------
+
+In simple cases, calling a function is enough to compute the value. If that function doesn't depend on the object
+being built, use :class:`~factory.LazyFunction` to call that function; it should receive a function taking no
+argument and returning the value for the field:
+
+.. code-block:: python
+
+    class LogFactory(factory.Factory):
+        class Meta:
+            model = models.Log
+
+        timestamp = factory.LazyFunction(datetime.now)
+
+.. code-block:: pycon
+
+    >>> LogFactory()
+    <Log: log at 2016-02-12 17:02:34>
+
+    >>> # The LazyFunction can be overriden
+    >>> LogFactory(timestamp=now - timedelta(days=1))
+    <Log: log at 2016-02-11 17:02:34>
+
+
+.. note:: For complex cases when you happen to write a specific function,
+          the :meth:`~factory.@lazy_attribute` decorator should be more appropriate.
+
+
 LazyAttribute
 -------------
 
@@ -235,6 +264,61 @@ This is handled by the :data:`~factory.FactoryOptions.inline_args` attribute:
 
     >>> MyFactory(y=4)
     <MyClass(1, 4, z=3)>
+
+
+Altering a factory's behaviour: parameters and traits
+-----------------------------------------------------
+
+Some classes are better described with a few, simple parameters, that aren't fields on the actual model.
+In that case, use a :attr:`~factory.Factory.Params` declaration:
+
+.. code-block:: python
+
+    class RentalFactory(factory.Factory):
+        class Meta:
+            model = Rental
+
+        begin = factory.fuzzy.FuzzyDate(start_date=datetime.date(2000, 1, 1))
+        end = factory.LazyAttribute(lambda o: o.begin + o.duration)
+
+        class Params:
+            duration = 12
+
+.. code-block:: pycon
+
+    >>> RentalFactory(duration=0)
+    <Rental: 2012-03-03 -> 2012-03-03>
+    >>> RentalFactory(duration=10)
+    <Rental: 2008-12-16 -> 2012-12-26>
+
+
+When many fields should be updated based on a flag, use :class:`Traits <factory.Trait>` instead:
+
+.. code-block:: python
+
+    class OrderFactory(factory.Factory):
+        status = 'pending'
+        shipped_by = None
+        shipped_on = None
+
+        class Meta:
+            model = Order
+
+        class Params:
+            shipped = factory.Trait(
+                status='shipped',
+                shipped_by=factory.SubFactory(EmployeeFactory),
+                shipped_on=factory.LazyFunction(datetime.date.today),
+            )
+
+A trait is toggled by a single boolean value:
+
+.. code-block:: pycon
+
+    >>> OrderFactory()
+    <Order: pending>
+    >>> OrderFactory(shipped=True)
+    <Order: shipped by John Doe on 2016-04-02>
 
 
 Strategies

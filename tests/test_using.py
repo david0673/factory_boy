@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# Copyright (c) 2011-2013 Raphaël Barrois
+# Copyright (c) 2011-2015 Raphaël Barrois
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to deal
@@ -27,6 +27,7 @@ import sys
 import warnings
 
 import factory
+from factory import errors
 
 from .compat import is_python2, unittest
 from . import tools
@@ -39,6 +40,15 @@ class TestObject(object):
         self.three = three
         self.four = four
         self.five = five
+
+    def as_dict(self):
+        return dict(
+            one=self.one,
+            two=self.two,
+            three=self.three,
+            four=self.four,
+            five=self.five,
+        )
 
 
 class FakeModel(object):
@@ -68,6 +78,9 @@ class FakeModel(object):
 
         def order_by(self, *args, **kwargs):
             return [1]
+
+        def using(self, db):
+            return self
 
     objects = FakeModelManager()
 
@@ -288,6 +301,19 @@ class SimpleBuildTestCase(unittest.TestCase):
         self.assertEqual(obj.two, 4)
         self.assertEqual(obj.three, 5)
         self.assertEqual(obj.four, None)
+
+    def test_build_to_dict(self):
+        # We have a generic factory
+        class TestObjectFactory(factory.Factory):
+            class Meta:
+                model = TestObject
+
+            one = 'one'
+            two = factory.LazyAttribute(lambda o: o.one * 2)
+
+        # Now, get a dict out of it
+        obj = factory.build(dict, FACTORY_CLASS=TestObjectFactory)
+        self.assertEqual({'one': 'one', 'two': 'oneone'}, obj)
 
 
 class UsingFactoryTestCase(unittest.TestCase):
@@ -845,7 +871,7 @@ class UsingFactoryTestCase(unittest.TestCase):
     def test_inheritance_sequence_unrelated_objects(self):
         """Sequence counters are kept with inheritance, unrelated objects.
 
-        See issue https://github.com/rbarrois/factory_boy/issues/93
+        See issue https://github.com/FactoryBoy/factory_boy/issues/93
 
         Problem: sequence counter is somewhat shared between factories
         until the "slave" factory has been called.
@@ -1073,6 +1099,134 @@ class KwargAdjustTestCase(unittest.TestCase):
         self.assertEqual({'x': 1, 'y': 2, 'z': 3, 'foo': 3}, obj.kwargs)
         self.assertEqual((), obj.args)
 
+    def test_rename(self):
+        class TestObject(object):
+            def __init__(self, attributes=None):
+                self.attributes = attributes
+
+        class TestObjectFactory(factory.Factory):
+            class Meta:
+                model = TestObject
+                rename = {'attributes_': 'attributes'}
+
+            attributes_ = 42
+
+        obj = TestObjectFactory.build()
+        self.assertEqual(42, obj.attributes)
+
+
+class TraitTestCase(unittest.TestCase):
+    def test_traits(self):
+        class TestObjectFactory(factory.Factory):
+            class Meta:
+                model = TestObject
+
+            class Params:
+                even = factory.Trait(two=True, four=True)
+                odd = factory.Trait(one=True, three=True, five=True)
+
+        obj1 = TestObjectFactory()
+        self.assertEqual(obj1.as_dict(),
+            dict(one=None, two=None, three=None, four=None, five=None))
+
+        obj2 = TestObjectFactory(even=True)
+        self.assertEqual(obj2.as_dict(),
+            dict(one=None, two=True, three=None, four=True, five=None))
+
+        obj3 = TestObjectFactory(odd=True)
+        self.assertEqual(obj3.as_dict(),
+            dict(one=True, two=None, three=True, four=None, five=True))
+
+        obj4 = TestObjectFactory(even=True, odd=True)
+        self.assertEqual(obj4.as_dict(),
+            dict(one=True, two=True, three=True, four=True, five=True))
+
+        obj5 = TestObjectFactory(odd=True, two=True)
+        self.assertEqual(obj5.as_dict(),
+            dict(one=True, two=True, three=True, four=None, five=True))
+
+    def test_traits_inheritance(self):
+        """A trait can be set in an inherited class."""
+        class TestObjectFactory(factory.Factory):
+            class Meta:
+                model = TestObject
+
+            class Params:
+                even = factory.Trait(two=True, four=True)
+                odd = factory.Trait(one=True, three=True, five=True)
+
+        class EvenObjectFactory(TestObjectFactory):
+            even = True
+
+        # Simple call
+        obj1 = EvenObjectFactory()
+        self.assertEqual(obj1.as_dict(),
+            dict(one=None, two=True, three=None, four=True, five=None))
+
+        # Force-disable it
+        obj2 = EvenObjectFactory(even=False)
+        self.assertEqual(obj2.as_dict(),
+            dict(one=None, two=None, three=None, four=None, five=None))
+
+    def test_traits_override(self):
+        """Override a trait in a subclass."""
+        class TestObjectFactory(factory.Factory):
+            class Meta:
+                model = TestObject
+
+            class Params:
+                even = factory.Trait(two=True, four=True)
+                odd = factory.Trait(one=True, three=True, five=True)
+
+        class WeirdMathFactory(TestObjectFactory):
+            class Params:
+                # Here, one is even.
+                even = factory.Trait(two=True, four=True, one=True)
+
+        obj = WeirdMathFactory(even=True)
+        self.assertEqual(obj.as_dict(),
+            dict(one=True, two=True, three=None, four=True, five=None))
+
+    def test_traits_chaining(self):
+        """Use a trait to enable other traits."""
+        class TestObjectFactory(factory.Factory):
+            class Meta:
+                model = TestObject
+
+            class Params:
+                even = factory.Trait(two=True, four=True)
+                odd = factory.Trait(one=True, three=True, five=True)
+                full = factory.Trait(even=True, odd=True)
+
+        # Setting "full" should enable all fields.
+        obj = TestObjectFactory(full=True)
+        self.assertEqual(obj.as_dict(),
+            dict(one=True, two=True, three=True, four=True, five=True))
+
+        # Does it break usual patterns?
+        obj1 = TestObjectFactory()
+        self.assertEqual(obj1.as_dict(),
+            dict(one=None, two=None, three=None, four=None, five=None))
+
+        obj2 = TestObjectFactory(even=True)
+        self.assertEqual(obj2.as_dict(),
+            dict(one=None, two=True, three=None, four=True, five=None))
+
+        obj3 = TestObjectFactory(odd=True)
+        self.assertEqual(obj3.as_dict(),
+            dict(one=True, two=None, three=True, four=None, five=True))
+
+    def test_prevent_cyclic_traits(self):
+
+        with self.assertRaises(errors.CyclicDefinitionError):
+            class TestObjectFactory(factory.Factory):
+                class Meta:
+                    model = TestObject
+
+                class Params:
+                    a = factory.Trait(b=True, one=True)
+                    b = factory.Trait(a=True, two=True)
+
 
 class SubFactoryTestCase(unittest.TestCase):
     def test_sub_factory(self):
@@ -1113,6 +1267,26 @@ class SubFactoryTestCase(unittest.TestCase):
         test_model = TestModel2Factory(one=42)
         self.assertEqual('x0x', test_model.two.one)
         self.assertEqual('x0xx0x', test_model.two.two)
+
+    def test_sub_factory_with_lazy_fields_access_factory_parent(self):
+        class TestModel2(FakeModel):
+            pass
+
+        class TestModelFactory(FakeModelFactory):
+            class Meta:
+                model = TestModel
+            one = 3
+
+        class TestModel2Factory(FakeModelFactory):
+            class Meta:
+                model = TestModel2
+            one = 'parent'
+            child = factory.SubFactory(TestModelFactory,
+                one=factory.LazyAttribute(lambda o: '%s child' % o.factory_parent.one),
+            )
+
+        test_model = TestModel2Factory()
+        self.assertEqual('parent child', test_model.child.one)
 
     def test_sub_factory_and_sequence(self):
         class TestObject(object):
@@ -1475,6 +1649,38 @@ class IteratorTestCase(unittest.TestCase):
         for i, obj in enumerate(objs):
             self.assertEqual(i + 10, obj.one)
 
+    def test_iterator_late_loading(self):
+        """Ensure that Iterator doesn't unroll on class creation.
+
+        This allows, for Django objects, to call:
+        foo = factory.Iterator(models.MyThingy.objects.all())
+        """
+        class DBRequest(object):
+            def __init__(self):
+                self.ready = False
+
+            def __iter__(self):
+                if not self.ready:
+                    raise ValueError("Not ready!!")
+                return iter([1, 2, 3])
+
+        # calling __iter__() should crash
+        req1 = DBRequest()
+        with self.assertRaises(ValueError):
+            iter(req1)
+
+        req2 = DBRequest()
+
+        class TestObjectFactory(factory.Factory):
+            class Meta:
+                model = TestObject
+
+            one = factory.Iterator(req2)
+
+        req2.ready = True
+        obj = TestObjectFactory()
+        self.assertEqual(1, obj.one)
+
 
 class BetterFakeModelManager(object):
     def __init__(self, keys, instance):
@@ -1490,11 +1696,8 @@ class BetterFakeModelManager(object):
         instance.id = 2
         return instance, True
 
-    def values_list(self, *args, **kwargs):
+    def using(self, db):
         return self
-
-    def order_by(self, *args, **kwargs):
-        return [1]
 
 
 class BetterFakeModel(object):
@@ -1618,14 +1821,14 @@ class DjangoModelFactoryTestCase(unittest.TestCase):
         o1 = TestModelFactory()
         o2 = TestModelFactory()
 
-        self.assertEqual('foo_2', o1.a)
-        self.assertEqual('foo_3', o2.a)
+        self.assertEqual('foo_0', o1.a)
+        self.assertEqual('foo_1', o2.a)
 
         o3 = TestModelFactory.build()
         o4 = TestModelFactory.build()
 
-        self.assertEqual('foo_4', o3.a)
-        self.assertEqual('foo_5', o4.a)
+        self.assertEqual('foo_2', o3.a)
+        self.assertEqual('foo_3', o4.a)
 
     def test_no_get_or_create(self):
         class TestModelFactory(factory.django.DjangoModelFactory):
@@ -1636,7 +1839,7 @@ class DjangoModelFactoryTestCase(unittest.TestCase):
 
         o = TestModelFactory()
         self.assertEqual(None, o._defaults)
-        self.assertEqual('foo_2', o.a)
+        self.assertEqual('foo_0', o.a)
         self.assertEqual(2, o.id)
 
     def test_get_or_create(self):
@@ -1652,7 +1855,7 @@ class DjangoModelFactoryTestCase(unittest.TestCase):
 
         o = TestModelFactory()
         self.assertEqual({'c': 3, 'd': 4}, o._defaults)
-        self.assertEqual('foo_2', o.a)
+        self.assertEqual('foo_0', o.a)
         self.assertEqual(2, o.b)
         self.assertEqual(3, o.c)
         self.assertEqual(4, o.d)
@@ -1672,7 +1875,7 @@ class DjangoModelFactoryTestCase(unittest.TestCase):
 
         o = TestModelFactory()
         self.assertEqual({}, o._defaults)
-        self.assertEqual('foo_2', o.a)
+        self.assertEqual('foo_0', o.a)
         self.assertEqual(2, o.b)
         self.assertEqual(3, o.c)
         self.assertEqual(4, o.d)
@@ -1804,7 +2007,7 @@ class PostGenerationTestCase(unittest.TestCase):
                 model = TestObject
             one = 3
             two = 2
-            three = factory.RelatedFactory(TestRelatedObjectFactory, name='obj')
+            three = factory.RelatedFactory(TestRelatedObjectFactory, 'obj')
 
         obj = TestObjectFactory.build()
         # Normal fields
@@ -1877,6 +2080,70 @@ class PostGenerationTestCase(unittest.TestCase):
         self.assertEqual(3, related.one)
         self.assertEqual(4, related.two)
 
+    def test_related_factory_selfattribute(self):
+        class TestRelatedObject(object):
+            def __init__(self, obj=None, one=None, two=None):
+                obj.related = self
+                self.one = one
+                self.two = two
+                self.three = obj
+
+        class TestRelatedObjectFactory(factory.Factory):
+            class Meta:
+                model = TestRelatedObject
+            one = 1
+            two = factory.LazyAttribute(lambda o: o.one + 1)
+
+        class TestObjectFactory(factory.Factory):
+            class Meta:
+                model = TestObject
+            one = 3
+            two = 2
+            three = factory.RelatedFactory(TestRelatedObjectFactory, 'obj',
+                two=factory.SelfAttribute('obj.two'),
+            )
+
+        obj = TestObjectFactory.build(two=4)
+        self.assertEqual(3, obj.one)
+        self.assertEqual(4, obj.two)
+        self.assertEqual(1, obj.related.one)
+        self.assertEqual(4, obj.related.two)
+
+    def test_parameterized_related_factory(self):
+        class TestRelatedObject(object):
+            def __init__(self, obj=None, one=None, two=None):
+                obj.related = self
+                self.one = one
+                self.two = two
+                self.three = obj
+
+        class TestRelatedObjectFactory(factory.Factory):
+            class Meta:
+                model = TestRelatedObject
+            one = 1
+            two = factory.LazyAttribute(lambda o: o.one + 1)
+
+        class TestObjectFactory(factory.Factory):
+            class Meta:
+                model = TestObject
+
+            class Params:
+                blah = 1
+
+            one = 3
+            two = 2
+            three = factory.RelatedFactory(TestRelatedObjectFactory, 'obj')
+            three__two = factory.SelfAttribute('blah')
+
+        obj = TestObjectFactory.build()
+        self.assertEqual(3, obj.one)
+        self.assertEqual(2, obj.two)
+        self.assertEqual(1, obj.related.one)
+        self.assertEqual(1, obj.related.two)
+
+        obj2 = TestObjectFactory.build(blah='blah')
+        self.assertEqual('blah', obj2.related.two)
+
 
 class RelatedFactoryExtractionTestCase(unittest.TestCase):
     def setUp(self):
@@ -1936,6 +2203,23 @@ class CircularTestCase(unittest.TestCase):
         self.assertEqual(13, b.foo.bar.y)
         self.assertEqual(42, b.foo.bar.foo.x)
         self.assertIsNone(b.foo.bar.foo.bar)
+
+
+class SelfReferentialTests(unittest.TestCase):
+    def test_no_parent(self):
+        from .cyclic import self_ref
+
+        obj = self_ref.TreeElementFactory(parent=None)
+        self.assertIsNone(obj.parent)
+
+    def test_deep(self):
+        from .cyclic import self_ref
+
+        obj = self_ref.TreeElementFactory(parent__parent__parent__parent=None)
+        self.assertIsNotNone(obj.parent)
+        self.assertIsNotNone(obj.parent.parent)
+        self.assertIsNotNone(obj.parent.parent.parent)
+        self.assertIsNone(obj.parent.parent.parent.parent)
 
 
 class DictTestCase(unittest.TestCase):

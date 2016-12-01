@@ -34,7 +34,7 @@ extensions = [
 ]
 
 extlinks = {
-    'issue': ('https://github.com/rbarrois/factory_boy/issues/%s', 'issue #'),
+    'issue': ('https://github.com/FactoryBoy/factory_boy/issues/%s', 'issue #'),
 }
 
 # Add any paths that contain templates here, relative to this directory.
@@ -51,7 +51,7 @@ master_doc = 'index'
 
 # General information about the project.
 project = u'Factory Boy'
-copyright = u'2011-2013, Raphaël Barrois, Mark Sandstrom'
+copyright = u'2011-2015, Raphaël Barrois, Mark Sandstrom'
 
 # The version info for the project you're documenting, acts as replacement for
 # |version| and |release|, also used in various other places throughout the
@@ -114,7 +114,7 @@ pygments_style = 'sphinx'
 
 # The theme to use for HTML and HTML Help pages.  See the documentation for
 # a list of builtin themes.
-html_theme = 'default'
+html_theme = 'sphinx_rtd_theme'
 
 # Theme options are theme-specific and customize the look and feel of a theme
 # further.  For a list of options available for each theme, see the
@@ -247,7 +247,7 @@ intersphinx_mapping = {
         'http://docs.djangoproject.com/en/dev/_objects/',
     ),
     'sqlalchemy': (
-        'http://docs.sqlalchemy.org/en/rel_0_8/',
-        'http://docs.sqlalchemy.org/en/rel_0_8/objects.inv',
+        'http://docs.sqlalchemy.org/en/rel_0_9/',
+        'http://docs.sqlalchemy.org/en/rel_0_9/objects.inv',
     ),
 }

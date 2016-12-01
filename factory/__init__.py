@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # Copyright (c) 2010 Mark Sandstrom
-# Copyright (c) 2011-2013 Raphaël Barrois
+# Copyright (c) 2011-2015 Raphaël Barrois
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to deal
@@ -20,10 +20,6 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 # THE SOFTWARE.
 
-__version__ = '2.4.1'
-__author__ = 'Raphaël Barrois <raphael.barrois+fboy@polytechnique.org>'
-
-
 from .base import (
     Factory,
     BaseDictFactory,
@@ -32,24 +28,27 @@ from .base import (
     ListFactory,
     StubFactory,
 
-    FactoryError,
-
     BUILD_STRATEGY,
     CREATE_STRATEGY,
     STUB_STRATEGY,
     use_strategy,
 )
 
-# Backward compatibility; this should be removed soon.
-from .mogo import MogoFactory
-from .django import DjangoModelFactory
+
+from .errors import (
+    FactoryError,
+)
+
+from .faker import Faker
 
 from .declarations import (
+    LazyFunction,
     LazyAttribute,
     Iterator,
     Sequence,
     LazyAttributeSequence,
     SelfAttribute,
+    Trait,
     ContainerAttribute,
     SubFactory,
     Dict,
@@ -83,3 +82,16 @@ from .helpers import (
     post_generation,
 )
 
+# Backward compatibility; this should be removed soon.
+from . import alchemy
+from . import django
+from . import mogo
+from . import mongoengine
+
+
+__version__ = '2.7.1'
+__author__ = 'Raphaël Barrois <raphael.barrois+fboy@polytechnique.org>'
+
+
+MogoFactory = mogo.MogoFactory
+DjangoModelFactory = django.DjangoModelFactory

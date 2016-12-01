@@ -11,6 +11,9 @@ For internals and customization points, please refer to the :doc:`internals` sec
 The :class:`Factory` class
 --------------------------
 
+Meta options
+""""""""""""
+
 .. class:: FactoryOptions
 
     .. versionadded:: 2.4.0
@@ -42,7 +45,7 @@ The :class:`Factory` class
         It will be automatically set to ``True`` if neither the :class:`Factory`
         subclass nor its parents define the :attr:`~FactoryOptions.model` attribute.
 
-        .. warning:: This flag is reset to ``False`` When a :class:`Factory` subclasses
+        .. warning:: This flag is reset to ``False`` when a :class:`Factory` subclasses
                      another one if a :attr:`~FactoryOptions.model` is set.
 
         .. versionadded:: 2.4.0
@@ -90,7 +93,7 @@ The :class:`Factory` class
                     model = Order
                     exclude = ('now',)
 
-                now = factory.LazyAttribute(lambda o: datetime.datetime.utcnow())
+                now = factory.LazyFunction(datetime.datetime.utcnow)
                 started_at = factory.LazyAttribute(lambda o: o.now - datetime.timedelta(hours=1))
                 paid_at = factory.LazyAttribute(lambda o: o.now - datetime.timedelta(minutes=50))
 
@@ -106,53 +109,59 @@ The :class:`Factory` class
         .. versionadded:: 2.4.0
 
 
+    .. attribute:: rename
+
+        Sometimes, a model expects a field with a name already used by one
+        of :class:`Factory`'s methods.
+
+        In this case, the :attr:`rename` attributes allows to define renaming
+        rules: the keys of the :attr:`rename` dict are those used in the
+        :class:`Factory` declarations, and their values the new name:
+
+        .. code-block:: python
+
+            class ImageFactory(factory.Factory):
+                # The model expects "attributes"
+                form_attributes = ['thumbnail', 'black-and-white']
+
+                class Meta:
+                    model = Image
+                    rename = {'form_attributes': 'attributes'}
+
+        .. versionadded: 2.6.0
+
+
     .. attribute:: strategy
 
         Use this attribute to change the strategy used by a :class:`Factory`.
-        The default is :data:`BUILD_STRATEGY`.
+        The default is :data:`CREATE_STRATEGY`.
 
+
+
+Attributes and methods
+""""""""""""""""""""""
 
 
 .. class:: Factory
 
-    .. note:: In previous versions, the fields of :class:`class Meta <factory.FactoryOptions>` were
-              defined as class attributes on :class:`Factory`. This is now deprecated and will be removed
-              in 2.5.0.
-
-              .. attribute:: FACTORY_FOR
-
-                  .. deprecated:: 2.4.0
-                                  See :attr:`FactoryOptions.model`.
-
-              .. attribute:: ABSTRACT_FACTORY
-
-                  .. deprecated:: 2.4.0
-                                  See :attr:`FactoryOptions.abstract`.
-
-              .. attribute:: FACTORY_ARG_PARAMETERS
-
-                  .. deprecated:: 2.4.0
-                                  See :attr:`FactoryOptions.inline_args`.
-
-              .. attribute:: FACTORY_HIDDEN_ARGS
-
-                  .. deprecated:: 2.4.0
-                                  See :attr:`FactoryOptions.exclude`.
-
-              .. attribute:: FACTORY_STRATEGY
-
-                  .. deprecated:: 2.4.0
-                                  See :attr:`FactoryOptions.strategy`.
-
 
     **Class-level attributes:**
 
+    .. attribute:: Meta
     .. attribute:: _meta
 
         .. versionadded:: 2.4.0
 
         The :class:`FactoryOptions` instance attached to a :class:`Factory` class is available
         as a :attr:`_meta` attribute.
+
+    .. attribute:: Params
+
+        .. versionadded:: 2.7.0
+
+        The extra parameters attached to a :class:`Factory` are declared through a :attr:`Params`
+        class.
+        See :ref:`the "Parameters" section <parameters>` for more information.
 
     .. attribute:: _options_class
 
@@ -258,7 +267,6 @@ The :class:`Factory` class
 
         .. OHAI_VIM**
 
-
     .. classmethod:: _setup_next_sequence(cls)
 
         This method will compute the first value to use for the sequence counter
@@ -361,6 +369,175 @@ The :class:`Factory` class
         factory in the chain.
 
 
+.. _parameters:
+
+Parameters
+""""""""""
+
+.. versionadded:: 2.7.0
+
+Some models have many fields that can be summarized by a few parameters; for instance,
+a train with many cars — each complete with serial number, manufacturer, ...;
+or an order that can be pending/shipped/received, with a few fields to describe each step.
+
+When building instances of such models, a couple of parameters can be enough to determine
+all other fields; this is handled by the :class:`~Factory.Params` section of a :class:`Factory` declaration.
+
+
+Simple parameters
+~~~~~~~~~~~~~~~~~
+
+Some factories only need little data:
+
+.. code-block:: python
+
+    class ConferenceFactory(factory.Factory):
+        class Meta:
+            model = Conference
+
+        class Params:
+            duration = 'short' # Or 'long'
+
+        start_date = factory.fuzzy.FuzzyDate()
+        end_date = factory.LazyAttribute(
+            lambda o: o.start_date + datetime.timedelta(days=2 if o.duration == 'short' else 7)
+        )
+        sprints_start = factory.LazyAttribute(
+            lambda o: o.end_date - datetime.timedelta(days=0 if o.duration == 'short' else 1)
+        )
+
+.. code-block:: pycon
+
+    >>> Conference(duration='short')
+    <Conference: DUTH 2015 (2015-11-05 - 2015-11-08, sprints 2015-11-08)>
+    >>> Conference(duration='long')
+    <Conference: DjangoConEU 2016 (2016-03-30 - 2016-04-03, sprints 2016-04-02)>
+
+
+Any simple parameter provided to the :class:`Factory.Params` section is available to the whole factory,
+but not passed to the final class (similar to the :attr:`~FactoryOptions.exclude` behavior).
+
+
+Traits
+~~~~~~
+
+.. class:: Trait(**kwargs)
+
+    .. OHAI VIM**
+
+    .. versionadded:: 2.7.0
+
+    A trait's parameters are the fields it should alter when enabled.
+
+
+For more complex situations, it is helpful to override a few fields at once:
+
+.. code-block:: python
+
+    class OrderFactory(factory.Factory):
+        class Meta:
+            model = Order
+
+        state = 'pending'
+        shipped_on = None
+        shipped_by = None
+
+        class Params:
+            shipped = factory.Trait(
+                state='shipped',
+                shipped_on=datetime.date.today(),
+                shipped_by=factory.SubFactory(EmployeeFactory),
+            )
+
+Such a :class:`Trait` is activated or disabled by a single boolean field:
+
+
+.. code-block:: pycon
+
+    >>> OrderFactory()
+    <Order: pending>
+    Order(state='pending')
+    >>> OrderFactory(shipped=True)
+    <Order: shipped by John Doe on 2016-04-02>
+
+
+A :class:`Trait` can be enabled/disabled by a :class:`Factory` subclass:
+
+.. code-block:: python
+
+    class ShippedOrderFactory(OrderFactory):
+        shipped = True
+
+
+Values set in a :class:`Trait` can be overridden by call-time values:
+
+.. code-block:: pycon
+
+    >>> OrderFactory(shipped=True, shipped_on=last_year)
+    <Order: shipped by John Doe on 2015-04-20>
+
+
+:class:`Traits <Trait>` can be chained:
+
+.. code-block:: python
+
+    class OrderFactory(factory.Factory):
+        class Meta:
+            model = Order
+
+        # Can be pending/shipping/received
+        state = 'pending'
+        shipped_on = None
+        shipped_by = None
+        received_on = None
+        received_by = None
+
+        class Params:
+            shipped = factory.Trait(
+                state='shipped',
+                shipped_on=datetime.date.today,
+                shipped_by=factory.SubFactory(EmployeeFactory),
+            )
+            received = factory.Trait(
+                shipped=True,
+                state='received',
+                shipped_on=datetime.date.today - datetime.timedelta(days=4),
+                received_on=datetime.date.today,
+                received_by=factory.SubFactory(CustomerFactory),
+            )
+
+.. code-block:: pycon
+
+    >>> OrderFactory(received=True)
+    <Order: shipped by John Doe on 2016-03-20, received by Joan Smith on 2016-04-02>
+
+
+
+A :class:`Trait` might be overridden in :class:`Factory` subclasses:
+
+.. code-block:: python
+
+    class LocalOrderFactory(OrderFactory):
+
+        class Params:
+            received = factory.Trait(
+                shipped=True,
+                state='received',
+                shipped_on=datetime.date.today - datetime.timedelta(days=1),
+                received_on=datetime.date.today,
+                received_by=factory.SubFactory(CustomerFactory),
+            )
+
+
+.. code-block:: pycon
+
+    >>> LocalOrderFactory(received=True)
+    <Order: shipped by John Doe on 2016-04-01, received by Joan Smith on 2016-04-02>
+
+
+.. note:: When overriding a :class:`Trait`, the whole declaration **MUST** be replaced.
+
+
 .. _strategies:
 
 Strategies
@@ -398,7 +575,7 @@ factory_boy supports two main strategies for generating instances, plus stubs.
                  when using the ``create`` strategy.
 
                  That policy will be used if the
-                 :attr:`associated class <FactoryOptions.model` has an ``objects``
+                 :attr:`associated class <FactoryOptions.model>` has an ``objects``
                  attribute *and* the :meth:`~Factory._create` classmethod of the
                  :class:`Factory` wasn't overridden.
 
@@ -481,6 +658,119 @@ factory_boy supports two main strategies for generating instances, plus stubs.
 
 Declarations
 ------------
+
+
+Faker
+"""""
+
+.. class:: Faker(provider, locale=None, **kwargs)
+
+    .. OHAIVIM**
+
+    In order to easily define realistic-looking factories,
+    use the :class:`Faker` attribute declaration.
+
+    This is a wrapper around `fake-factory <https://pypi.python.org/pypi/fake-factory>`_;
+    its argument is the name of a ``fake-factory`` provider:
+
+    .. code-block:: python
+
+        class UserFactory(factory.Factory):
+            class Meta:
+                model = User
+
+            name = factory.Faker('name')
+
+    .. code-block:: pycon
+
+        >>> user = UserFactory()
+        >>> user.name
+        'Lucy Cechtelar'
+
+
+    .. attribute:: locale
+
+        If a custom locale is required for one specific field,
+        use the ``locale`` parameter:
+
+        .. code-block:: python
+
+            class UserFactory(factory.Factory):
+                class Meta:
+                    model = User
+
+                name = factory.Faker('name', locale='fr_FR')
+
+        .. code-block:: pycon
+
+            >>> user = UserFactory()
+            >>> user.name
+            'Jean Valjean'
+
+
+    .. classmethod:: override_default_locale(cls, locale)
+
+        If the locale needs to be overridden for a whole test,
+        use :meth:`~factory.Faker.override_default_locale`:
+
+        .. code-block:: pycon
+
+            >>> with factory.Faker.override_default_locale('de_DE'):
+            ...     UserFactory()
+            <User: Johannes Brahms>
+
+    .. classmethod:: add_provider(cls, locale=None)
+
+        Some projects may need to fake fields beyond those provided by ``fake-factory``;
+        in such cases, use :meth:`factory.Faker.add_provider` to declare additional providers
+        for those fields:
+
+        .. code-block:: python
+
+            factory.Faker.add_provider(SmileyProvider)
+
+            class FaceFactory(factory.Factory):
+                class Meta:
+                    model = Face
+
+                smiley = factory.Faker('smiley')
+
+
+LazyFunction
+""""""""""""
+
+.. class:: LazyFunction(method_to_call)
+
+The :class:`LazyFunction` is the simplest case where the value of an attribute
+does not depend on the object being built.
+
+It takes as argument a method to call (function, lambda...); that method should
+not take any argument, though keyword arguments are safe but unused,
+and return a value.
+
+.. code-block:: python
+
+    class LogFactory(factory.Factory):
+        class Meta:
+            model = models.Log
+
+        timestamp = factory.LazyFunction(datetime.now)
+
+.. code-block:: pycon
+
+    >>> LogFactory()
+    <Log: log at 2016-02-12 17:02:34>
+
+    >>> # The LazyFunction can be overriden
+    >>> LogFactory(timestamp=now - timedelta(days=1))
+    <Log: log at 2016-02-11 17:02:34>
+
+Decorator
+~~~~~~~~~
+
+The class :class:`LazyFunction` does not provide a decorator.
+
+For complex cases, use :meth:`LazyAttribute.lazy_attribute` directly.
 
 LazyAttribute
 """""""""""""
@@ -565,7 +855,7 @@ This declaration takes a single argument, a function accepting a single paramete
 
 
 .. note:: An extra kwarg argument, ``type``, may be provided.
-          This feature is deprecated in 1.3.0 and will be removed in 2.0.0.
+          This feature was deprecated in 1.3.0 and will be removed in 2.0.0.
 
 
 .. code-block:: python
@@ -642,8 +932,9 @@ The sequence counter is shared across all :class:`Sequence` attributes of the
 Inheritance
 ~~~~~~~~~~~
 
-When a :class:`Factory` inherits from another :class:`Factory`, their
-sequence counter is shared:
+When a :class:`Factory` inherits from another :class:`Factory` and the `model`
+of the subclass inherits from the `model` of the parent, the sequence counter
+is shared across the :class:`Factory` classes:
 
 .. code-block:: python
 
@@ -972,7 +1263,7 @@ gains an "upward" semantic through the double-dot notation, as used in Python im
     >>> company.owner.language
     'fr'
 
-Obviously, this "follow parents" hability also handles overriding some attributes on call:
+Obviously, this "follow parents" ability also handles overriding some attributes on call:
 
 .. code-block:: pycon
 
@@ -1193,6 +1484,7 @@ with the :class:`Dict` and :class:`List` attributes:
         argument, if another type (tuple, set, ...) is required.
 
 
+
 Post-generation hooks
 """""""""""""""""""""
 
@@ -1204,6 +1496,9 @@ To support this pattern, factory_boy provides the following tools:
   - :class:`PostGeneration`: this class allows calling a given function with the generated object as argument
   - :func:`post_generation`: decorator performing the same functions as :class:`PostGeneration`
   - :class:`RelatedFactory`: this builds or creates a given factory *after* building/creating the first Factory.
+
+Post-generation hooks are called in the same order they are declared in the factory class, so that
+functions can rely on the side effects applied by the previous post-generation hook.
 
 
 Extracting parameters
@@ -1221,7 +1516,7 @@ For instance, a :class:`PostGeneration` hook is declared as ``post``:
             model = SomeObject
 
         @post_generation
-        def post(self, create, extracted, **kwargs):
+        def post(obj, create, extracted, **kwargs):
             obj.set_origin(create)
 
 .. OHAI_VIM**
@@ -1341,6 +1636,23 @@ If a value if passed for the :class:`RelatedFactory` attribute, this disables
     >>> guyane = CountryFactory(capital_city=paris, capital_city__name='Kourou')
     >>> City.objects.count()  # No new capital_city generated, ``name`` ignored.
     1
+
+
+.. note:: The target of the :class:`RelatedFactory` is evaluated *after* the initial factory has been instantiated.
+          This means that calls to :class:`factory.SelfAttribute` cannot go higher than this :class:`RelatedFactory`:
+
+          .. code-block:: python
+
+              class CountryFactory(factory.Factory):
+                  class Meta:
+                      model = Country
+
+                  lang = 'fr'
+                  capital_city = factory.RelatedFactory(CityFactory, 'capital_of',
+                      # factory.SelfAttribute('..lang') will crash, since the context of
+                      # ``CountryFactory`` has already been evaluated.
+                      main_lang=factory.SelfAttribute('capital_of.lang'),
+                  )
 
 
 PostGeneration
@@ -1468,7 +1780,7 @@ Thus, by default, our users will have a password set to ``'defaultpassword'``.
     True
 
 If the :class:`PostGenerationMethodCall` declaration contained no
-arguments or one argument, an overriding the value can be passed
+arguments or one argument, an overriding value can be passed
 directly to the method through a keyword argument matching the attribute name.
 For example we can override the default password specified in the declaration
 above by simply passing in the desired password as a keyword argument to the

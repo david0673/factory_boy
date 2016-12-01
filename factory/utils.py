@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # Copyright (c) 2010 Mark Sandstrom
-# Copyright (c) 2011-2013 Raphaël Barrois
+# Copyright (c) 2011-2015 Raphaël Barrois
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to deal
@@ -24,9 +24,12 @@ from __future__ import unicode_literals
 
 import collections
 
+from . import compat
+
 #: String for splitting an attribute name into a
 #: (subfactory_name, subfactory_field) tuple.
 ATTR_SPLITTER = '__'
+
 
 def extract_dict(prefix, kwargs, pop=True, exclude=()):
     """Extracts all values beginning with a given prefix from a dict.
@@ -35,7 +38,7 @@ def extract_dict(prefix, kwargs, pop=True, exclude=()):
 
     Args:
         prefix (str): the prefix to use for lookups
-        kwargs (dict): the dict from which values should be extracted
+        kwargs (dict): the dict from which values should be extracted; WILL BE MODIFIED.
         pop (bool): whether to use pop (True) or get (False)
         exclude (iterable): list of prefixed keys that shouldn't be extracted
 
@@ -68,7 +71,7 @@ def multi_extract_dict(prefixes, kwargs, pop=True, exclude=()):
 
     Args:
         prefixes (str list): the prefixes to use for lookups
-        kwargs (dict): the dict from which values should be extracted
+        kwargs (dict): the dict from which values should be extracted; WILL BE MODIFIED.
         pop (bool): whether to use pop (True) or get (False)
         exclude (iterable): list of prefixed keys that shouldn't be extracted
 
@@ -94,31 +97,49 @@ def import_object(module_name, attribute_name):
         >>> import_object('datetime', 'datetime')
         <type 'datetime.datetime'>
     """
-    module = __import__(module_name, {}, {}, [attribute_name], 0)
-    return getattr(module, attribute_name)
+    # Py2 compatibility: force str (i.e bytes) when importing.
+    module = __import__(str(module_name), {}, {}, [str(attribute_name)], 0)
+    return getattr(module, str(attribute_name))
 
 
 def _safe_repr(obj):
     try:
-        obj_repr = repr(obj)
-    except UnicodeError:
+        return log_repr(obj)
+    except Exception:
         return '<bad_repr object at %s>' % id(obj)
 
-    try:  # Convert to "text type" (= unicode)
-        return '%s' % obj_repr
-    except UnicodeError:  # non-ascii bytes repr on Py2
-        return obj_repr.decode('utf-8')
+
+class log_pprint(object):
+    """Helper for properly printing args / kwargs passed to an object.
+
+    Since it is only used with factory.debug(), the computation is
+    performed lazily.
+    """
+    __slots__ = ['args', 'kwargs']
+
+    def __init__(self, args=(), kwargs=None):
+        self.args = args
+        self.kwargs = kwargs or {}
+
+    def __repr__(self):
+        return repr(str(self))
+
+    def __str__(self):
+        return ', '.join(
+            [_safe_repr(arg) for arg in self.args] +
+            [
+                '%s=%s' % (key, _safe_repr(value))
+                for key, value in self.kwargs.items()
+            ]
+        )
 
 
-def log_pprint(args=(), kwargs=None):
-    kwargs = kwargs or {}
-    return ', '.join(
-        [_safe_repr(arg) for arg in args] +
-        [
-            '%s=%s' % (key, _safe_repr(value))
-            for key, value in kwargs.items()
-        ]
-    )
+def log_repr(obj):
+    """Generate a text-compatible repr of an object.
+
+    Some projects have a tendency to generate bytes-style repr in Python2.
+    """
+    return compat.force_text(repr(obj))
 
 
 class ResetableIterator(object):

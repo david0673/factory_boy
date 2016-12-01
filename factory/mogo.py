@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # Copyright (c) 2010 Mark Sandstrom
-# Copyright (c) 2011-2013 Raphaël Barrois
+# Copyright (c) 2011-2015 Raphaël Barrois
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to deal
@@ -21,11 +21,10 @@
 # THE SOFTWARE.
 
 
-from __future__ import unicode_literals
-
-
 """factory_boy extensions for use with the mogo library (pymongo wrapper)."""
 
+
+from __future__ import unicode_literals
 
 from . import base
 
@@ -37,10 +36,10 @@ class MogoFactory(base.Factory):
 
     @classmethod
     def _build(cls, model_class, *args, **kwargs):
-        return model_class.new(*args, **kwargs)
+        return model_class(*args, **kwargs)
 
     @classmethod
     def _create(cls, model_class, *args, **kwargs):
-        instance = model_class.new(*args, **kwargs)
+        instance = model_class(*args, **kwargs)
         instance.save()
         return instance

@@ -1,6 +1,143 @@
 ChangeLog
 =========
 
+.. _v2.7.1:
+
+2.7.1 (2016-07-10)
+------------------
+
+*New:*
+
+    - :issue:`240`: Call post-generation declarations in the order they were declared,
+      thanks to `Oleg Pidsadnyi <https://github.com/olegpidsadnyi>`_.
+
+
+.. _v2.7.0:
+
+2.7.0 (2016-04-19)
+------------------
+
+*New:*
+
+    - :issue:`267`: Add :class:`factory.LazyFunction` to remove unneeded lambda parameters,
+      thanks to `Hervé Cauwelier <https://github.com/bors-ltd>`_.
+    - :issue:`251`: Add :ref:`parameterized factories <parameters>` and :class:`traits <factory.Trait>`
+    - :issue:`256`, :issue:`292`: Improve error messages in corner cases
+
+*Removed:*
+
+    - :issue:`278`: Formally drop support for Python2.6
+
+.. _v2.6.1:
+
+2.6.1 (2016-02-10)
+------------------
+
+*New:*
+
+    - :issue:`262`: Allow optional forced flush on SQLAlchemy, courtesy of `Minjung <https://github.com/Minjung>`_.
+
+.. _v2.6.0:
+
+2.6.0 (2015-10-20)
+------------------
+
+*New:*
+
+    - Add :attr:`factory.FactoryOptions.rename` to help handle conflicting names (:issue:`206`)
+    - Add support for random-yet-realistic values through `fake-factory <https://pypi.python.org/pypi/fake-factory>`_,
+      through the :class:`factory.Faker` class.
+    - :class:`factory.Iterator` no longer begins iteration of its argument at import time,
+      thus allowing to pass in a lazy iterator such as a Django queryset
+      (i.e ``factory.Iterator(models.MyThingy.objects.all())``).
+    - Simplify imports for ORM layers, now available through a simple ``factory`` import,
+      at ``factory.alchemy.SQLAlchemyModelFactory`` / ``factory.django.DjangoModelFactory`` / ``factory.mongoengine.MongoEngineFactory``.
+
+*Bugfix:*
+
+    - :issue:`201`: Properly handle custom Django managers when dealing with abstract Django models.
+    - :issue:`212`: Fix :meth:`factory.django.mute_signals` to handle Django's signal caching
+    - :issue:`228`: Don't load :func:`django.apps.apps.get_model()` until required
+    - :issue:`219`: Stop using :meth:`mogo.model.Model.new()`, deprecated 4 years ago.
+
+.. _v2.5.2:
+
+2.5.2 (2015-04-21)
+------------------
+
+*Bugfix:*
+
+    - Add support for Django 1.7/1.8
+    - Add support for mongoengine>=0.9.0 / pymongo>=2.1
+
+.. _v2.5.1:
+
+2.5.1 (2015-03-27)
+------------------
+
+*Bugfix:*
+
+    - Respect custom managers in :class:`~factory.django.DjangoModelFactory` (see :issue:`192`)
+    - Allow passing declarations (e.g :class:`~factory.Sequence`) as parameters to :class:`~factory.django.FileField`
+      and :class:`~factory.django.ImageField`.
+
+.. _v2.5.0:
+
+2.5.0 (2015-03-26)
+------------------
+
+*New:*
+
+    - Add support for getting/setting :mod:`factory.fuzzy`'s random state (see :issue:`175`, :issue:`185`).
+    - Support lazy evaluation of iterables in :class:`factory.fuzzy.FuzzyChoice` (see :issue:`184`).
+    - Support non-default databases at the factory level (see :issue:`171`)
+    - Make :class:`factory.django.FileField` and :class:`factory.django.ImageField` non-post_generation, i.e normal fields also available in ``save()`` (see :issue:`141`).
+
+*Bugfix:*
+
+    - Avoid issues when using :meth:`factory.django.mute_signals` on a base factory class (see :issue:`183`).
+    - Fix limitations of :class:`factory.StubFactory`, that can now use :class:`factory.SubFactory` and co (see :issue:`131`).
+
+
+*Deprecation:*
+
+    - Remove deprecated features from :ref:`v2.4.0`
+    - Remove the auto-magical sequence setup (based on the latest primary key value in the database) for Django and SQLAlchemy;
+      this relates to issues :issue:`170`, :issue:`153`, :issue:`111`, :issue:`103`, :issue:`92`, :issue:`78`. See https://github.com/FactoryBoy/factory_boy/commit/13d310f for technical details.
+
+.. warning:: Version 2.5.0 removes the 'auto-magical sequence setup' bug-and-feature.
+             This could trigger some bugs when tests expected a non-zero sequence reference.
+
+Upgrading
+"""""""""
+
+.. warning:: Version 2.5.0 removes features that were marked as deprecated in :ref:`v2.4.0 <v2.4.0>`.
+
+All ``FACTORY_*``-style attributes are now declared in a ``class Meta:`` section:
+
+.. code-block:: python
+
+    # Old-style, deprecated
+    class MyFactory(factory.Factory):
+        FACTORY_FOR = models.MyModel
+        FACTORY_HIDDEN_ARGS = ['a', 'b', 'c']
+
+    # New-style
+    class MyFactory(factory.Factory):
+        class Meta:
+            model = models.MyModel
+            exclude = ['a', 'b', 'c']
+
+A simple shell command to upgrade the code would be:
+
+.. code-block:: sh
+
+    # sed -i: inplace update
+    # grep -l: only file names, not matching lines
+    sed -i 's/FACTORY_FOR =/class Meta:\n        model =/' $(grep -l FACTORY_FOR $(find . -name '*.py'))
+
+This takes care of all ``FACTORY_FOR`` occurences; the files containing other attributes to rename can be found with ``grep -R  FACTORY .``
+
 
 .. _v2.4.1:
 
@@ -19,7 +156,7 @@ ChangeLog
 *New:*
 
     - Add support for :attr:`factory.fuzzy.FuzzyInteger.step`, thanks to `ilya-pirogov <https://github.com/ilya-pirogov>`_ (:issue:`120`)
-    - Add :meth:`~factory.django.mute_signals` decorator to temporarily disable some signals, thanks to `ilya-pirogov <https://github.com>`_ (:issue:`122`)
+    - Add :meth:`~factory.django.mute_signals` decorator to temporarily disable some signals, thanks to `ilya-pirogov <https://github.com/ilya-pirogov>`_ (:issue:`122`)
     - Add :class:`~factory.fuzzy.FuzzyFloat` (:issue:`124`)
     - Declare target model and other non-declaration fields in a ``class Meta`` section.
 
@@ -29,8 +166,6 @@ ChangeLog
       Those attributes should now declared within the :class:`class Meta <factory.FactoryOptions>` attribute:
 
       For :class:`factory.Factory`:
-
-      * Rename :attr:`~factory.Factory.FACTORY_FOR` to :attr:`~factory.FactoryOptions.model`
 
       * Rename :attr:`~factory.Factory.FACTORY_FOR` to :attr:`~factory.FactoryOptions.model`
       * Rename :attr:`~factory.Factory.ABSTRACT_FACTORY` to :attr:`~factory.FactoryOptions.abstract`

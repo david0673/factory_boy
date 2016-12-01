@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # Copyright (c) 2010 Mark Sandstrom
-# Copyright (c) 2011-2013 Raphaël Barrois
+# Copyright (c) 2011-2015 Raphaël Barrois
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to deal
@@ -24,30 +24,29 @@
 """Compatibility tools"""
 
 import datetime
-import decimal
 import sys
 
 PY2 = (sys.version_info[0] == 2)
 
 if PY2:  # pragma: no cover
     def is_string(obj):
-        return isinstance(obj, (str, unicode))
+        return isinstance(obj, (str, unicode))  # noqa
 
-    from StringIO import StringIO as BytesIO
+    from StringIO import StringIO as BytesIO  # noqa
+
+    def force_text(str_or_unicode):
+        if isinstance(str_or_unicode, unicode):  # noqa
+            return str_or_unicode
+        return str_or_unicode.decode('utf-8')
 
 else:  # pragma: no cover
     def is_string(obj):
         return isinstance(obj, str)
 
-    from io import BytesIO
+    from io import BytesIO  # noqa
 
-
-if sys.version_info[:2] == (2, 6):  # pragma: no cover
-    def float_to_decimal(fl):
-        return decimal.Decimal(str(fl))
-else:  # pragma: no cover
-    def float_to_decimal(fl):
-        return decimal.Decimal(fl)
+    def force_text(text):
+        return text
 
 
 try:  # pragma: no cover

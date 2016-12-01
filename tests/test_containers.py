@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # Copyright (c) 2010 Mark Sandstrom
-# Copyright (c) 2011-2013 Raphaël Barrois
+# Copyright (c) 2011-2015 Raphaël Barrois
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to deal
@@ -23,6 +23,7 @@
 from factory import base
 from factory import containers
 from factory import declarations
+from factory import errors
 
 from .compat import unittest
 
@@ -78,17 +79,39 @@ class LazyStubTestCase(unittest.TestCase):
         self.assertEqual(2, stub.factory_parent.rank)
         self.assertEqual(1, stub.factory_parent.factory_parent.rank)
 
+    class LazyAttr(containers.LazyValue):
+        def __init__(self, attrname):
+            self.attrname = attrname
+
+        def evaluate(self, obj, container=None):
+            return 1 + getattr(obj, self.attrname)
+
     def test_cyclic_definition(self):
-        class LazyAttr(containers.LazyValue):
-            def __init__(self, attrname):
-                self.attrname = attrname
+        stub = containers.LazyStub({
+            'one': self.LazyAttr('two'),
+            'two': self.LazyAttr('one'),
+        })
 
+        self.assertRaises(errors.CyclicDefinitionError, getattr, stub, 'one')
+
+    def test_cyclic_definition_rescue(self):
+        class LazyAttrDefault(self.LazyAttr):
+            def __init__(self, attname, defvalue):
+                super(LazyAttrDefault, self).__init__(attname)
+                self.defvalue = defvalue
             def evaluate(self, obj, container=None):
-                return 1 + getattr(obj, self.attrname)
+                try:
+                    return super(LazyAttrDefault, self).evaluate(obj, container)
+                except errors.CyclicDefinitionError:
+                    return self.defvalue
 
-        stub = containers.LazyStub({'one': LazyAttr('two'), 'two': LazyAttr('one')})
+        stub = containers.LazyStub({
+            'one': LazyAttrDefault('two', 10),
+            'two': self.LazyAttr('one'),
+        })
 
-        self.assertRaises(containers.CyclicDefinitionError, getattr, stub, 'one')
+        self.assertEqual(10, stub.one)
+        self.assertEqual(11, stub.two)
 
     def test_representation(self):
         class RandomObj(object):
@@ -102,97 +125,56 @@ class LazyStubTestCase(unittest.TestCase):
 
 
 class AttributeBuilderTestCase(unittest.TestCase):
-    def test_empty(self):
-        """Tests building attributes from an empty definition."""
+
+    def make_fake_factory(self, decls):
+        class Meta:
+            declarations = decls
+            parameters = {}
+            parameters_dependencies = {}
 
         class FakeFactory(object):
-            @classmethod
-            def declarations(cls, extra):
-                return extra
+            _meta = Meta
 
             @classmethod
             def _generate_next_sequence(cls):
                 return 1
 
+        return FakeFactory
+
+    def test_empty(self):
+        """Tests building attributes from an empty definition."""
+
+        FakeFactory = self.make_fake_factory({})
         ab = containers.AttributeBuilder(FakeFactory)
 
         self.assertEqual({}, ab.build(create=False))
 
     def test_factory_defined(self):
-        class FakeFactory(object):
-            @classmethod
-            def declarations(cls, extra):
-                d = {'one': 1}
-                d.update(extra)
-                return d
-
-            @classmethod
-            def _generate_next_sequence(cls):
-                return 1
-
+        FakeFactory = self.make_fake_factory({'one': 1})
         ab = containers.AttributeBuilder(FakeFactory)
+
         self.assertEqual({'one': 1}, ab.build(create=False))
 
     def test_extended(self):
-        class FakeFactory(object):
-            @classmethod
-            def declarations(cls, extra):
-                d = {'one': 1}
-                d.update(extra)
-                return d
-
-            @classmethod
-            def _generate_next_sequence(cls):
-                return 1
-
+        FakeFactory = self.make_fake_factory({'one': 1})
         ab = containers.AttributeBuilder(FakeFactory, {'two': 2})
         self.assertEqual({'one': 1, 'two': 2}, ab.build(create=False))
 
     def test_overridden(self):
-        class FakeFactory(object):
-            @classmethod
-            def declarations(cls, extra):
-                d = {'one': 1}
-                d.update(extra)
-                return d
-
-            @classmethod
-            def _generate_next_sequence(cls):
-                return 1
-
+        FakeFactory = self.make_fake_factory({'one': 1})
         ab = containers.AttributeBuilder(FakeFactory, {'one': 2})
         self.assertEqual({'one': 2}, ab.build(create=False))
 
     def test_factory_defined_sequence(self):
         seq = declarations.Sequence(lambda n: 'xx%d' % n)
-
-        class FakeFactory(object):
-            @classmethod
-            def declarations(cls, extra):
-                d = {'one': seq}
-                d.update(extra)
-                return d
-
-            @classmethod
-            def _generate_next_sequence(cls):
-                return 1
+        FakeFactory = self.make_fake_factory({'one': seq})
 
         ab = containers.AttributeBuilder(FakeFactory)
         self.assertEqual({'one': 'xx1'}, ab.build(create=False))
 
     def test_additionnal_sequence(self):
         seq = declarations.Sequence(lambda n: 'xx%d' % n)
-
-        class FakeFactory(object):
-            @classmethod
-            def declarations(cls, extra):
-                d = {'one': 1}
-                d.update(extra)
-                return d
-
-            @classmethod
-            def _generate_next_sequence(cls):
-                return 1
+        FakeFactory = self.make_fake_factory({'one': 1})
 
         ab = containers.AttributeBuilder(FakeFactory, extra={'two': seq})
         self.assertEqual({'one': 1, 'two': 'xx1'}, ab.build(create=False))
@@ -200,34 +182,27 @@ class AttributeBuilderTestCase(unittest.TestCase):
     def test_replaced_sequence(self):
         seq = declarations.Sequence(lambda n: 'xx%d' % n)
         seq2 = declarations.Sequence(lambda n: 'yy%d' % n)
-
-        class FakeFactory(object):
-            @classmethod
-            def declarations(cls, extra):
-                d = {'one': seq}
-                d.update(extra)
-                return d
-
-            @classmethod
-            def _generate_next_sequence(cls):
-                return 1
+        FakeFactory = self.make_fake_factory({'one': seq})
 
         ab = containers.AttributeBuilder(FakeFactory, extra={'one': seq2})
         self.assertEqual({'one': 'yy1'}, ab.build(create=False))
 
+    def test_lazy_function(self):
+        lf = declarations.LazyFunction(int)
+        FakeFactory = self.make_fake_factory({'one': 1, 'two': lf})
+
+        ab = containers.AttributeBuilder(FakeFactory)
+        self.assertEqual({'one': 1, 'two': 0}, ab.build(create=False))
+
+        ab = containers.AttributeBuilder(FakeFactory, {'one': 4})
+        self.assertEqual({'one': 4, 'two': 0}, ab.build(create=False))
+
+        ab = containers.AttributeBuilder(FakeFactory, {'one': 4, 'three': lf})
+        self.assertEqual({'one': 4, 'two': 0, 'three': 0}, ab.build(create=False))
+
     def test_lazy_attribute(self):
         la = declarations.LazyAttribute(lambda a: a.one * 2)
-
-        class FakeFactory(object):
-            @classmethod
-            def declarations(cls, extra):
-                d = {'one': 1, 'two': la}
-                d.update(extra)
-                return d
-
-            @classmethod
-            def _generate_next_sequence(cls):
-                return 1
+        FakeFactory = self.make_fake_factory({'one': 1, 'two': la})
 
         ab = containers.AttributeBuilder(FakeFactory)
         self.assertEqual({'one': 1, 'two': 2}, ab.build(create=False))
@@ -243,18 +218,12 @@ class AttributeBuilderTestCase(unittest.TestCase):
             pass
 
         sf = declarations.SubFactory(FakeInnerFactory)
-
-        class FakeFactory(object):
-            @classmethod
-            def declarations(cls, extra):
-                d = {'one': sf, 'two': 2}
-                d.update(extra)
-                return d
+        FakeFactory = self.make_fake_factory({'one': sf, 'two': 2})
 
         ab = containers.AttributeBuilder(FakeFactory, {'one__blah': 1, 'two__bar': 2})
         self.assertTrue(ab.has_subfields(sf))
         self.assertEqual(['one'], list(ab._subfields.keys()))
-        self.assertEqual(2, ab._attrs['two__bar'])
+        self.assertEqual(2, ab._declarations['two__bar'])
 
     def test_sub_factory(self):
         pass

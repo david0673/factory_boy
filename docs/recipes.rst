@@ -33,6 +33,29 @@ use the :class:`~factory.SubFactory` declaration:
         group = factory.SubFactory(GroupFactory)
 
 
+Choosing from a populated table
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+If the target of the :class:`~django.db.models.ForeignKey` should be
+chosen from a pre-populated table
+(e.g :class:`django.contrib.contenttypes.models.ContentType`),
+simply use a :class:`factory.Iterator` on the chosen queryset:
+
+.. code-block:: python
+
+    import factory, factory.django
+    from . import models
+
+    class UserFactory(factory.django.DjangoModelFactory):
+        class Meta:
+            model = models.User
+
+        language = factory.Iterator(models.Language.objects.all())
+
+Here, ``models.Language.objects.all()`` won't be evaluated until the
+first call to ``UserFactory``; thus avoiding DB queries at import time.
+
+
 Reverse dependencies (reverse ForeignKey)
 -----------------------------------------
 
@@ -65,7 +88,7 @@ When a :class:`UserFactory` is instantiated, factory_boy will call
 
 
 Example: Django's Profile
-"""""""""""""""""""""""""
+~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Django (<1.5) provided a mechanism to attach a ``Profile`` to a ``User`` instance,
 using a :class:`~django.db.models.OneToOneField` from the ``Profile`` to the ``User``.
@@ -125,8 +148,8 @@ factory_boy related factories.
           method.
 
 
-Simple ManyToMany
------------------
+Simple Many-to-many relationship
+--------------------------------
 
 Building the adequate link between two models depends heavily on the use case;
 factory_boy doesn't provide a "all in one tools" as for :class:`~factory.SubFactory`
@@ -144,7 +167,7 @@ hook:
 
     class User(models.Model):
         name = models.CharField()
-        groups = models.ManyToMany(Group)
+        groups = models.ManyToManyField(Group)
 
 
     # factories.py
@@ -181,8 +204,8 @@ the ``groups`` declaration will add passed in groups to the set of groups for th
 user.
 
 
-ManyToMany with a 'through'
----------------------------
+Many-to-many relation with a 'through'
+--------------------------------------
 
 
 If only one link is required, this can be simply performed with a :class:`RelatedFactory`.
@@ -196,7 +219,7 @@ If more links are needed, simply add more :class:`RelatedFactory` declarations:
 
     class Group(models.Model):
         name = models.CharField()
-        members = models.ManyToMany(User, through='GroupLevel')
+        members = models.ManyToManyField(User, through='GroupLevel')
 
     class GroupLevel(models.Model):
         user = models.ForeignKey(User)
@@ -304,7 +327,21 @@ Here, we want:
         country = factory.SubFactory(CountryFactory)
         owner = factory.SubFactory(UserFactory, country=factory.SelfAttribute('..country'))
 
+If the value of a field on the child factory is indirectly derived from a field on the parent factory, you will need to use LazyAttribute and poke the "factory_parent" attribute.
 
+This time, we want the company owner to live in a country neighboring the country of the company:
+
+.. code-block:: python
+
+    class CompanyFactory(factory.django.DjangoModelFactory):
+        class Meta:
+            model = models.Company
+
+        name = "ACME, Inc."
+        country = factory.SubFactory(CountryFactory)
+        owner = factory.SubFactory(UserFactory,
+            country=factory.LazyAttribute(lambda o: get_random_neighbor(o.factory_parent.country)))
+ 
 Custom manager methods
 ----------------------
 
@@ -327,3 +364,128 @@ default :meth:`Model.objects.create() <django.db.models.query.QuerySet.create>` 
            manager = cls._get_manager(model_class)
            # The default would use ``manager.create(*args, **kwargs)``
            return manager.create_user(*args, **kwargs)
+
+
+Forcing the sequence counter
+----------------------------
+
+A common pattern with factory_boy is to use a :class:`factory.Sequence` declaration
+to provide varying values to attributes declared as unique.
+
+However, it is sometimes useful to force a given value to the counter, for instance
+to ensure that tests are properly reproductible.
+
+factory_boy provides a few hooks for this:
+
+
+Forcing the value on a per-call basis
+    In order to force the counter for a specific :class:`~factory.Factory` instantiation,
+    just pass the value in the ``__sequence=42`` parameter:
+
+    .. code-block:: python
+
+        class AccountFactory(factory.Factory):
+            class Meta:
+                model = Account
+            uid = factory.Sequence(lambda n: n)
+            name = "Test"
+
+    .. code-block:: pycon
+
+        >>> obj1 = AccountFactory(name="John Doe", __sequence=10)
+        >>> obj1.uid  # Taken from the __sequence counter
+        10
+        >>> obj2 = AccountFactory(name="Jane Doe")
+        >>> obj2.uid  # The base sequence counter hasn't changed
+        1
+
+
+Resetting the counter globally
+    If all calls for a factory must start from a deterministic number,
+    use :meth:`factory.Factory.reset_sequence`; this will reset the counter
+    to its initial value (as defined by :meth:`factory.Factory._setup_next_sequence`).
+
+    .. code-block:: pycon
+
+        >>> AccountFactory().uid
+        1
+        >>> AccountFactory().uid
+        2
+        >>> AccountFactory.reset_sequence()
+        >>> AccountFactory().uid  # Reset to the initial value
+        1
+        >>> AccountFactory().uid
+        2
+
+    It is also possible to reset the counter to a specific value:
+
+    .. code-block:: pycon
+
+        >>> AccountFactory.reset_sequence(10)
+        >>> AccountFactory().uid
+        10
+        >>> AccountFactory().uid
+        11
+
+    This recipe is most useful in a :class:`~unittest.TestCase`'s
+    :meth:`~unittest.TestCase.setUp` method.
+
+
+Forcing the initial value for all projects
+    The sequence counter of a :class:`~factory.Factory` can also be set
+    automatically upon the first call through the
+    :meth:`~factory.Factory._setup_next_sequence` method; this helps when the
+    objects's attributes mustn't conflict with pre-existing data.
+
+    A typical example is to ensure that running a Python script twice will create
+    non-conflicting objects, by setting up the counter to "max used value plus one":
+
+    .. code-block:: python
+
+        class AccountFactory(factory.django.DjangoModelFactory):
+            class Meta:
+                model = models.Account
+
+            @classmethod
+            def _setup_next_sequence(cls):
+                try:
+                    return models.Accounts.objects.latest('uid').uid + 1
+                except models.Account.DoesNotExist:
+                    return 1
+
+    .. code-block:: pycon
+
+        >>> Account.objects.create(uid=42, name="Blah")
+        >>> AccountFactory.create()  # Sets up the account number based on the latest uid
+        <Account uid=43, name=Test>
+
+
+Converting a factory's output to a dict
+---------------------------------------
+
+In order to inject some data to, say, a REST API, it can be useful to fetch the factory's data
+as a dict.
+
+Internally, a factory will:
+
+1. Merge declarations and overrides from all sources (class definition, call parameters, ...)
+2. Resolve them into a dict
+3. Pass that dict as keyword arguments to the model's ``build`` / ``create`` function
+
+
+In order to get a dict, we'll just have to swap the model; the easiest way is to use
+:meth:`factory.build`:
+
+.. code-block:: python
+
+    class UserFactory(factory.django.DjangoModelFactory):
+        class Meta:
+            model = models.User
+
+        first_name = factory.Sequence(lambda n: "Agent %03d" % n)
+        username = factory.Faker('username')
+
+.. code-block:: pycon
+
+    >>> factory.build(dict, FACTORY_CLASS=UserFactory)
+    {'first_name': "Agent 001", 'username': 'john_doe'}

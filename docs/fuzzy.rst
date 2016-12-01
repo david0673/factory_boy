@@ -3,10 +3,18 @@ Fuzzy attributes
 
 .. module:: factory.fuzzy
 
+.. note:: Now that FactoryBoy includes the :class:`factory.Faker` class, most of
+          these built-in fuzzers are deprecated in favor of their
+          `Faker <https://faker.readthedocs.io/>`_ equivalents. Further
+          discussion here:
+          `<https://github.com/FactoryBoy/factory_boy/issues/271/>`_
+
 Some tests may be interested in testing with fuzzy, random values.
 
 This is handled by the :mod:`factory.fuzzy` module, which provides a few
 random declarations.
+
+.. note:: Use ``import factory.fuzzy`` to load this module.
 
 
 FuzzyAttribute
@@ -62,8 +70,11 @@ FuzzyChoice
     The :class:`FuzzyChoice` fuzzer yields random choices from the given
     iterable.
 
-    .. note:: The passed in :attr:`choices` will be converted into a list at
-              declaration time.
+    .. note:: The passed in :attr:`choices` will be converted into a list upon
+              first use, not at declaration time.
+
+              This allows passing in, for instance, a Django queryset that will
+              only hit the database during the database, not at import time.
 
     .. attribute:: choices
 
@@ -194,7 +205,7 @@ FuzzyDate
 FuzzyDateTime
 -------------
 
-.. class:: FuzzyDateTime(start_dt[, end_dt], tz=UTC, force_year=None, force_month=None, force_day=None, force_hour=None, force_minute=None, force_second=None, force_microsecond=None)
+.. class:: FuzzyDateTime(start_dt[, end_dt], force_year=None, force_month=None, force_day=None, force_hour=None, force_minute=None, force_second=None, force_microsecond=None)
 
     The :class:`FuzzyDateTime` fuzzer generates random timezone-aware datetime within a given
     inclusive range.
@@ -338,3 +349,33 @@ They should inherit from the :class:`BaseFuzzyAttribute` class, and override its
 
         The method responsible for generating random values.
         *Must* be overridden in subclasses.
+
+
+Managing randomness
+-------------------
+
+Using :mod:`random` in factories allows to "fuzz" a program efficiently.
+However, it's sometimes required to *reproduce* a failing test.
+
+:mod:`factory.fuzzy` uses a separate instance of :class:`random.Random`,
+and provides a few helpers for this:
+
+.. method:: get_random_state()
+
+    Call :meth:`get_random_state` to retrieve the random generator's current
+    state.
+
+.. method:: set_random_state(state)
+
+    Use :meth:`set_random_state` to set a custom state into the random generator
+    (fetched from :meth:`get_random_state` in a previous run, for instance)
+
+.. method:: reseed_random(seed)
+
+    The :meth:`reseed_random` function allows to load a chosen seed into the random generator.
+
+
+Custom :class:`BaseFuzzyAttribute` subclasses **SHOULD**
+use :obj:`factory.fuzzy._random` as a randomness source; this ensures that
+data they generate can be regenerated using the simple state from
+:meth:`get_random_state`.
